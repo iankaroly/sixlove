@@ -266,6 +266,17 @@
     if (state.phase === "full") state.phase = "spin";
     render();
   }
+  // Reorder the ladder any time before the season starts. Swapping into an empty spot just moves the player.
+  function moveSingles(slotId, dir) {
+    if (!["spin", "pick", "full"].includes(state.phase)) return;
+    const slots = singlesSlots(), i = slots.findIndex((s) => s.id === slotId), j = i + dir;
+    if (i < 0 || j < 0 || j >= slots.length) return;
+    const a = slots[i].id, b = slots[j].id;
+    [state.lineup[a], state.lineup[b]] = [state.lineup[b], state.lineup[a]];
+    for (const id of [a, b]) if (!state.lineup[id]) delete state.lineup[id];
+    render();
+    el.poster.querySelector(`[data-move][data-slotid="${b}"][data-move="${dir > 0 ? "1" : "-1"}"]`)?.focus({ preventScroll: true });
+  }
   function afterPlacement() {
     state.phase = cardFull() ? "full" : "spin";
     render();
@@ -540,9 +551,12 @@
     if (p) {
       const isStacked = s.singles && stackingVisible() && stackedLines(state.lineup).has(s.id);
       const removable = s.seat && building && inSingles(p);
+      const movable = s.singles && building && interactive;
+      const idx = movable ? singlesSlots().findIndex((x) => x.id === s.id) : -1;
       return `<li class="spot is-filled ${isStacked ? "is-stacked" : ""}"><span class="spot-name">${s.short}</span>
         <span class="spot-player">${flag(p.cc)} ${esc(p.name)}${s.seat && inSingles(p) ? ` <small>${esc(singlesSlots().find((x) => state.lineup[x.id] === p).short)}</small>` : ""}</span>
-        ${removable ? `<button class="unseat" data-unseat="${s.id}" aria-label="Clear seat">×</button>` : visible ? `<span class="spot-score">${isStacked ? "Stacked" : s.seat ? "" : r1(singles(p))}</span>` : ""}</li>`;
+        ${movable ? `<span class="reorder">${isStacked ? `<i>Stacked</i>` : ""}<button data-move="-1" data-slotid="${s.id}" ${idx === 0 ? "disabled" : ""} aria-label="Move up">↑</button><button data-move="1" data-slotid="${s.id}" ${idx === singlesSlots().length - 1 ? "disabled" : ""} aria-label="Move down">↓</button></span>`
+        : removable ? `<button class="unseat" data-unseat="${s.id}" aria-label="Clear seat">×</button>` : visible ? `<span class="spot-score">${isStacked ? "Stacked" : s.seat ? "" : r1(singles(p))}</span>` : ""}</li>`;
     }
     if (interactive && state.phase === "pick" && state.selected) {
       const bad = s.singles && stackingVisible() ? stackingIfPlaced(s.id) : [];
@@ -629,6 +643,7 @@
     if (btn.dataset.seat) { state.seatPick = btn.dataset.seat; render(); return; }
     if (btn.dataset.fill) { seatFromRoster(btn.dataset.seatid, btn.dataset.fill); return; }
     if (btn.dataset.unseat) { clearSeat(btn.dataset.unseat); return; }
+    if (btn.dataset.move) { moveSingles(btn.dataset.slotid, Number(btn.dataset.move)); return; }
     switch (btn.dataset.action) {
       case "spin": spin(false); break;
       case "respin": spin(true); break;

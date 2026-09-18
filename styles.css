@@ -325,6 +325,11 @@ body[data-phase="home"] .draw { align-items: start; }
 .team-tag b { font: 600 0.875rem/1 var(--mono); color: var(--accent); }
 .team-tag i { font: 600 0.5625rem/1.1 var(--body); font-style: normal; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent-2); text-align: center; }
 .spot-player small { font: 500 0.625rem/1 var(--mono); color: var(--faint); margin-left: 0.3rem; }
+.reorder { display: inline-flex; align-items: center; gap: 0.25rem; }
+.reorder i { font: 600 0.5625rem/1 var(--body); font-style: normal; letter-spacing: 0.06em; text-transform: uppercase; color: var(--loss); margin-right: 0.2rem; }
+.reorder button { width: 1.5rem; height: 1.5rem; padding: 0; border-radius: 0.4rem; border: 1px solid var(--border-strong); background: transparent; color: var(--muted); font-size: 0.8rem; line-height: 1; }
+.reorder button:not(:disabled):hover { background: var(--panel-2); color: var(--text); border-color: var(--accent); }
+.reorder button:disabled { opacity: 0.3; }
 .unseat { width: 1.5rem; height: 1.5rem; border-radius: 50%; border: 1px solid var(--border-strong); background: transparent; color: var(--muted); font-size: 0.9rem; line-height: 1; padding: 0; }
 .unseat:hover { background: var(--panel-2); color: var(--text); }
 .place.is-seat { border-style: dashed; border-color: var(--border-strong); }
