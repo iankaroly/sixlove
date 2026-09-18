@@ -32,8 +32,23 @@
       slots: DUAL_SLOTS, surface: "hard", stages: SEASON.map(([title, sub, diff]) => ({ title, sub, surface: "hard", diff })) };
   }
 
-  let choice = { kind: "dual", tour: "atp", surface: "hard" };
+  // Room rules the host can set. The same knobs drive a solo game with their defaults.
+  const ROOM_OPTIONS = [
+    { key: "mode", label: "Ratings", options: [["classic", "Shown"], ["scout", "Hidden"]] },
+    { key: "rolls", label: "Rolls", options: [["shared", "Same for everyone"], ["own", "Everyone rolls their own"]] },
+    { key: "respins", label: "Re-rolls", options: [["0", "0"], ["1", "1"], ["2", "2"], ["3", "3"]] },
+    { key: "hand", label: "Players per roll", options: [["6", "6"], ["8", "8"], ["10", "10"]] },
+    { key: "stacking", label: "Stacking rule", options: [["on", "On"], ["off", "Off"]], dualOnly: true },
+    { key: "eras", label: "Eras", options: [["all", "All"], ["classic", "1970s to 90s"], ["modern", "2000s on"]] },
+  ];
+  const ROOM_DEFAULTS = { mode: "classic", rolls: "shared", respins: "2", hand: "8", stacking: "on", eras: "all" };
+  const ERA_SETS = { all: null, classic: ["70s", "80s", "90s"], modern: ["00s", "10s", "20s"] };
+  const defaultRules = (mode) => ({ respins: MODES[mode].respins, hand: HAND_SIZE, stacking: true, eras: "all" });
+  const rulesFromRoom = (r) => ({ respins: r.respins, hand: r.hand, stacking: r.stacking, eras: r.eras });
+
+  let choice = { kind: "dual", tour: "atp", surface: "hard", room: { ...ROOM_DEFAULTS } };
   try { Object.assign(choice, JSON.parse(localStorage.getItem("sixlove-choice")) || {}); } catch { /* private window */ }
+  choice.room = { ...ROOM_DEFAULTS, ...(choice.room || {}) };
   if (!BUILDS[choice.kind]) choice.kind = "dual";
   if (!TOURS[choice.tour]) choice.tour = "atp";
   if (!SURFACES[choice.surface]) choice.surface = "hard";
@@ -61,13 +76,23 @@
     return data;
   }
   function applyRoomSettings() {
-    Object.assign(choice, room.settings);
+    const { kind, tour, surface } = room.settings;
+    Object.assign(choice, { kind, tour, surface });
     format = buildFormat(choice);
+  }
+  function roomSummary(s) {
+    const bits = [BUILDS[s.kind].name.replace(/^A /, ""), TOURS[s.tour].name, s.kind === "cup" ? `${SURFACES[s.surface].toLowerCase()} at home` : null,
+      s.mode === "scout" ? "ratings hidden" : "ratings shown", s.rolls === "own" ? "everyone rolls their own" : "same rolls for everyone",
+      `${s.respins} re-roll${s.respins === 1 ? "" : "s"}`, `${s.hand} per roll`, s.kind === "dual" ? `stacking ${s.stacking === false ? "off" : "on"}` : null,
+      s.eras === "classic" ? "1970s to 90s" : s.eras === "modern" ? "2000s on" : "all eras"];
+    return bits.filter(Boolean).join(" · ");
   }
   async function createRoom(name) {
     roomBusy = true; roomError = ""; render();
     try {
-      const data = await api("create", { name, settings: { kind: choice.kind, tour: choice.tour, surface: choice.surface, mode: choice.roomMode || "classic" } });
+      const r = choice.room;
+      const data = await api("create", { name, settings: { kind: choice.kind, tour: choice.tour, surface: choice.surface, mode: r.mode,
+        rolls: r.rolls, respins: Number(r.respins), hand: Number(r.hand), stacking: r.stacking !== "off", eras: r.eras } });
       room = data.room; me = { id: data.playerId, name };
       saveMe(room.code, me);
       history.replaceState(null, "", `?room=${room.code}`);
@@ -188,7 +213,7 @@
 
   // The ladder rule. Compares each filled singles spot with the nearest filled spot above it.
   function stackedLines(lineup) {
-    if (format.kind !== "dual") return new Set();
+    if (format.kind !== "dual" || state.rules?.stacking === false) return new Set();
     const stacked = new Set();
     let above = null;
     for (const slot of singlesSlots()) {
@@ -207,15 +232,17 @@
 
   // ---------- game flow ----------
   function setChoice(patch) {
-    Object.assign(choice, patch);
+    for (const [k, v] of Object.entries(patch)) {
+      if (k.startsWith("room:")) choice.room[k.slice(5)] = v; else choice[k] = v;
+    }
     try { localStorage.setItem("sixlove-choice", JSON.stringify(choice)); } catch { /* private window */ }
     format = buildFormat(choice);
     render();
   }
 
-  function startGame(mode, seedOverride) {
+  function startGame(mode, seedOverride, rules = defaultRules(mode)) {
     const seed = seedOverride ?? (mode === "daily" ? hash(`sixlove-${today()}-${format.key}`) : (Math.random() * 2 ** 32) >>> 0);
-    state = { phase: "spin", mode, rng: mulberry32(seed), round: 0, respins: MODES[mode].respins,
+    state = { phase: "spin", mode, rules, rng: mulberry32(seed), round: 0, respins: rules.respins,
       pool: null, crate: [], lastPoolId: null, selected: null, lineup: {}, used: new Set(), seatPick: null, results: [], shown: 0 };
     setLabel("Six", "Love");
     render();
@@ -228,9 +255,12 @@
     if (state.phase === "spinning") return;
     if (isRespin) state.respins--;
     // One era per roll, never the same era twice running. Each roll deals a fresh weighted hand from that era.
-    const options = format.pools.filter((p) => p.id !== state.lastPoolId && availableItems(p).length >= HAND_SIZE);
+    const allowed = ERA_SETS[state.rules.eras];
+    const eligible = format.pools.filter((p) => !allowed || allowed.includes(p.id.split("-")[1]));
+    let options = eligible.filter((p) => p.id !== state.lastPoolId && availableItems(p).length >= state.rules.hand);
+    if (!options.length) options = eligible.filter((p) => availableItems(p).length >= 2);
     const pool = options[Math.floor(state.rng() * options.length)];
-    const crate = dealHand(availableItems(pool), state.rng);
+    const crate = dealHand(availableItems(pool), state.rng, state.rules.hand);
     state.phase = "spinning";
     state.selected = null;
     render();
@@ -247,7 +277,7 @@
     };
     if (reducedMotion) { land(); return; }
     el.ball.classList.add("is-spinning");
-    const reel = format.pools;
+    const reel = eligible;
     const flicker = setInterval(() => { const p = reel[Math.floor(Math.random() * reel.length)]; setLabel(p.era, p.scene); }, 90);
     setTimeout(land, 1400);
   }
@@ -450,9 +480,10 @@
         </div>
         <section class="friends">
           <h2 class="friends-title">Play with friends</h2>
-          <p class="friends-blurb">Everyone in a room gets the same rolls with the build and tour picked above. Share the link, play whenever, and the scoreboard ranks the room.</p>
+          <p class="friends-blurb">Set the rules, share the link, and everyone plays whenever they like. The scoreboard ranks the room.</p>
+          <p class="friends-sub">The room uses the build and tour picked above. Host's rules:</p>
+          <div class="room-options">${ROOM_OPTIONS.filter((o) => !o.dualOnly || choice.kind === "dual").map((o) => `<div class="room-option"><span class="chooser-title">${o.label}</span>${chips(`room:${o.key}`, o.options, choice.room[o.key])}</div>`).join("")}</div>
           <div class="friends-row">
-            <div class="seg friends-mode">${["classic", "scout"].map((m) => `<button class="seg-btn" data-choose="roomMode" data-value="${m}" aria-pressed="${(choice.roomMode || "classic") === m}">${MODES[m].name}</button>`).join("")}</div>
             <form class="friends-form" data-form="create"><input class="input" name="name" placeholder="Your name" maxlength="24" required autocomplete="nickname"><button class="primary" type="submit" ${roomBusy ? "disabled" : ""}>Create a room</button></form>
           </div>
           <form class="friends-form is-join" data-form="open"><input class="input" name="code" placeholder="Have a code?" maxlength="6" autocapitalize="characters" required><button class="secondary" type="submit">Open room</button></form>
@@ -463,12 +494,12 @@
     if (p === "room") {
       const mine = myEntry();
       const s = room.settings;
-      const summary = `${BUILDS[s.kind].name.replace(/^A /, "")} · ${TOURS[s.tour].name}${s.kind === "cup" ? ` · ${SURFACES[s.surface].toLowerCase()} at home` : ""} · ${MODES[s.mode].name}`;
+      const summary = roomSummary(s);
       const finished = room.players.filter((x) => x.result).length;
       el.console.innerHTML = `
         <p class="eyebrow">${esc(room.host)}'s room · ${esc(summary)}</p>
         <h2>${!me ? `Join ${esc(room.host)}'s room` : mine?.result ? "Scoreboard" : "You're in"}</h2>
-        ${!me ? `<p class="lede">Enter a name and you'll get the same rolls as everyone else. ${room.players.length} in so far.</p>
+        ${!me ? `<p class="lede">Enter a name to join. ${s.rolls === "own" ? "Everyone rolls their own hands." : "Everyone gets the same rolls."} ${room.players.length} in so far.</p>
           <form class="friends-form" data-form="join"><input class="input" name="name" placeholder="Your name" maxlength="24" required autocomplete="nickname"><button class="primary" type="submit" ${roomBusy ? "disabled" : ""}>Join and play</button></form>`
         : mine?.result ? `<p class="lede">${finished} of ${room.players.length} finished. This page updates on its own.</p>`
         : `<p class="lede">Play when you're ready. Your result posts to the room when the season ends.</p>
@@ -495,7 +526,7 @@
         <p class="eyebrow">${esc(state.pool.era)} · pick ${state.round + 1}</p>
         <h2>${esc(state.pool.scene)}</h2>
         <p class="lede">${state.selected ? `Choose ${copy.place} for ${esc(state.selected.name)}: a singles spot or a doubles seat.` : copy.crateLede}</p>
-        ${MODES[state.mode].respins ? `<button class="secondary" data-action="respin" ${canRespin ? "" : "disabled"}>
+        ${state.rules.respins ? `<button class="secondary" data-action="respin" ${canRespin ? "" : "disabled"}>
           ${canRespin ? `Re-roll · ${state.respins} left` : "No re-rolls left"}</button>` : ""}`;
       return;
     }
@@ -693,7 +724,7 @@
         break;
       case "home": clearInterval(state.timer); state = room ? { phase: "room" } : { phase: "home" }; setLabel("Six", "Love"); render(); break;
       case "leave": leaveRoom(); state = { phase: "home" }; render(); break;
-      case "playroom": applyRoomSettings(); startGame(room.settings.mode, room.seed); break;
+      case "playroom": applyRoomSettings(); startGame(room.settings.mode, room.settings.rolls === "own" ? hash(`${room.seed}-${me.id}`) : room.seed, rulesFromRoom(room.settings)); break;
       case "scoreboard": clearInterval(state.timer); state = { phase: "room" }; setLabel("Six", "Love"); render(); window.scrollTo({ top: 0 }); break;
       case "copylink":
         navigator.clipboard?.writeText(roomLink()).then(() => { btn.textContent = "Copied"; setTimeout(() => (btn.textContent = "Copy link"), 1500); }).catch(() => {});

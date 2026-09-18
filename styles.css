@@ -296,6 +296,10 @@ body[data-phase="home"] .draw { align-items: start; }
 .friends { margin-top: 1.5rem; padding: 1.1rem 1.1rem 1rem; border-radius: var(--r); background: var(--panel); border: 1px solid var(--border); display: grid; gap: 0.75rem; }
 .friends-title { font: 700 1.1rem/1.1 var(--display) !important; letter-spacing: -0.02em; margin: 0 !important; }
 .friends-blurb { font-size: 0.875rem; color: var(--muted); max-width: 40rem; }
+.friends-sub { font-size: 0.8125rem; color: var(--muted); margin-top: -0.25rem; }
+.room-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 0.6rem 1rem; }
+.room-option .seg { display: flex; flex-wrap: wrap; }
+.room-option .seg-btn { flex: 1 1 auto; text-align: center; padding: 0.35rem 0.7rem; font-size: 0.8125rem; }
 .friends-row { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
 .friends-form { display: flex; gap: 0.5rem; flex: 1 1 18rem; min-width: 0; }
 .friends-form.is-join { flex: 0 1 20rem; }

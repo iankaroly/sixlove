@@ -5,7 +5,8 @@ const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const code = () => Array.from({ length: 6 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join("");
 const id = () => crypto.randomUUID().replace(/-/g, "").slice(0, 12);
 const clean = (s, n) => String(s ?? "").replace(/[<>]/g, "").trim().slice(0, n);
-const KINDS = ["dual", "cup"], TOURS = ["atp", "wta", "open"], SURFACES = ["hard", "clay", "grass"], MODES = ["classic", "scout", "daily"];
+const KINDS = ["dual", "cup"], TOURS = ["atp", "wta", "open"], SURFACES = ["hard", "clay", "grass"], MODES = ["classic", "scout"];
+const ROLLS = ["shared", "own"], HANDS = [6, 8, 10], ERAS = ["all", "classic", "modern"];
 
 async function write(path, data) {
   await put(path, JSON.stringify(data), { access: "public", addRandomSuffix: false, contentType: "application/json" });
@@ -50,7 +51,10 @@ export default async function handler(req, res) {
       const s = body.settings || {};
       const settings = {
         kind: KINDS.includes(s.kind) ? s.kind : "dual", tour: TOURS.includes(s.tour) ? s.tour : "atp",
-        surface: SURFACES.includes(s.surface) ? s.surface : "hard", mode: MODES.includes(s.mode) && s.mode !== "daily" ? s.mode : "classic",
+        surface: SURFACES.includes(s.surface) ? s.surface : "hard", mode: MODES.includes(s.mode) ? s.mode : "classic",
+        rolls: ROLLS.includes(s.rolls) ? s.rolls : "shared", respins: Math.max(0, Math.min(3, Number(s.respins) || 0)),
+        hand: HANDS.includes(Number(s.hand)) ? Number(s.hand) : 8, stacking: s.stacking !== false && s.stacking !== "off",
+        eras: ERAS.includes(s.eras) ? s.eras : "all",
       };
       const name = clean(body.name, 24) || "Host";
       const player = { id: id(), name, joinedAt: Date.now() };
