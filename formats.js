@@ -107,6 +107,10 @@ function dealHand(players, rng, size = HAND_SIZE) {
   return hand;
 }
 
+// Team grade, like the letter on a 20-0 roster. Singles carry most of it; doubles is one point in seven.
+const GRADES = [[93, "S+"], [90, "S"], [87, "A+"], [84, "A"], [81, "A-"], [78, "B+"], [75, "B"], [72, "B-"], [69, "C+"], [66, "C"], [63, "C-"], [58, "D"], [0, "F"]];
+const gradeLetter = (score) => GRADES.find(([min]) => score >= min)[1];
+
 // NCAA rule: the ladder must run in order of ability. A spot may be this much stronger than the spot above it.
 const STACK_TOLERANCE = 4;
 

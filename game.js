@@ -106,7 +106,8 @@
   async function submitResult() {
     if (!room || !me) return;
     const points = state.results.reduce((sum, r) => sum + Number(r.score.split("-")[0]), 0);
-    const lineup = [...singlesSlots().map((s) => `${s.short}: ${state.lineup[s.id].name}`), ...pairs().map(([a, b]) => `Dbl: ${pairName(a, b)}`)].join("; ");
+    const g = teamGrade();
+    const lineup = [g ? `Grade ${g.letter} (${g.score})` : "", ...singlesSlots().map((s) => `${s.short}: ${state.lineup[s.id].name}`), ...pairs().map(([a, b]) => `Dbl: ${pairName(a, b)}`)].filter(Boolean).join("; ");
     try { room = await api("result", { code: room.code, playerId: me.id, wins: wins(), total: state.results.length, points, grid: grid(), lineup }); }
     catch (err) { roomError = err.message; }
     render();
@@ -168,6 +169,21 @@
   // Singles players who could still take a doubles seat.
   const benchForSeat = () => roster().filter((p) => !inDoubles(p));
   const pairs = () => teams().map((tm) => tm.map((s) => state.lineup[s.id])).filter((pr) => pr.every(Boolean));
+  // The team grade: what the card is worth right now. A stacked line counts as the default it will be.
+  function teamGrade() {
+    if (!state.lineup) return null;
+    const stacked = stackedLines(state.lineup);
+    const singlesScores = singlesSlots().map((s) => state.lineup[s.id]).map((p, i) => (p ? (stacked.has(singlesSlots()[i].id) ? 55 : singles(p)) : null)).filter((x) => x !== null);
+    const pairScores = pairs().map(([a, b]) => pairRating(a, b));
+    if (!singlesScores.length && !pairScores.length) return null;
+    const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
+    const wS = format.kind === "dual" ? 0.8 : 0.7, wD = 1 - wS;
+    let score, complete = cardFull();
+    if (singlesScores.length && pairScores.length) score = wS * mean(singlesScores) + wD * mean(pairScores);
+    else score = singlesScores.length ? mean(singlesScores) : mean(pairScores);
+    return { score: Math.round(score), letter: gradeLetter(score), complete };
+  }
+  const gradeVisible = () => Boolean(MODES[state.mode]?.showRatings) || state.phase === "full" || ratingsVisible();
 
   // The ladder rule. Compares each filled singles spot with the nearest filled spot above it.
   function stackedLines(lineup) {
@@ -277,6 +293,18 @@
     render();
     el.poster.querySelector(`[data-move][data-slotid="${b}"][data-move="${dir > 0 ? "1" : "-1"}"]`)?.focus({ preventScroll: true });
   }
+  // Reorder the doubles teams before the season starts. Both seats travel together.
+  function moveTeam(team, dir) {
+    if (!["spin", "pick", "full"].includes(state.phase)) return;
+    const list = teams(), i = list.findIndex((tm) => tm[0].team === team), j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    list[i].forEach((slot, k) => {
+      const other = list[j][k].id;
+      [state.lineup[slot.id], state.lineup[other]] = [state.lineup[other], state.lineup[slot.id]];
+      for (const id of [slot.id, other]) if (!state.lineup[id]) delete state.lineup[id];
+    });
+    render();
+  }
   function afterPlacement() {
     state.phase = cardFull() ? "full" : "spin";
     render();
@@ -365,7 +393,8 @@
     const label = `Six-Love ${state.mode === "daily" ? `daily ${today()}` : MODES[state.mode].name.toLowerCase()}, ${format.label}`;
     const card = singlesSlots().map((s) => `${s.name}: ${state.lineup[s.id].name}`).join("\n");
     const dbl = pairs().map(([a, b], i) => `Doubles ${i + 1}: ${pairName(a, b)}`).join("\n");
-    return `${label}: ${w}-${n - w}\n${grid()}\n\n${card}\n${dbl}`;
+    const g = teamGrade();
+    return `${label}: ${w}-${n - w}${g ? ` · team ${g.letter} (${g.score})` : ""}\n${grid()}\n\n${card}\n${dbl}`;
   }
 
   // ---------- rendering ----------
@@ -472,7 +501,7 @@
     if (p === "full") {
       const stacked = stackedLines(state.lineup);
       el.console.innerHTML = `
-        <p class="eyebrow">Card complete</p>
+        <p class="eyebrow">Card complete${(() => { const g = teamGrade(); return g ? ` · team grade ${g.letter} (${g.score})` : ""; })()}</p>
         <h2>${copy.fullTitle}</h2>
         <p class="lede">${copy.fullLede}</p>
         ${stacked.size && stackingVisible() ? `<p class="warn">Stacked ladder: ${[...stacked].map((id) => slotOf(id).name).join(", ")} will be defaulted.</p>` : ""}
@@ -483,7 +512,7 @@
     const w = shown.filter((r) => r.won).length, l = shown.length - w, n = state.results.length;
     el.console.innerHTML = `
       <p class="eyebrow">${p === "done" ? "Final record" : `${copy.stage} ${Math.min(state.shown + 1, n)} of ${n}`}</p>
-      <p class="record-line" aria-live="polite"><span class="tally">${w}<span class="tally-dash">–</span>${l}</span></p>
+      <p class="record-line" aria-live="polite"><span class="tally">${w}<span class="tally-dash">–</span>${l}</span>${(() => { const g = teamGrade(); return g ? `<span class="tally-grade"><b>${g.letter}</b>${g.score}</span>` : ""; })()}</p>
       <p class="lede">${p === "done" ? verdict(w) : "…"}</p>
       ${p === "done"
         ? `<div class="row"><button class="primary" data-action="share">Copy result</button>${room ? `<button class="secondary" data-action="scoreboard">Scoreboard</button>` : ""}<button class="secondary" data-action="home">Draft again</button></div>`
@@ -576,16 +605,22 @@
     const visible = !home && ratingsVisible();
     const filledSingles = home ? 0 : singlesSlots().filter((s) => state.lineup[s.id]).length;
     const filledTeams = home ? 0 : pairs().length;
+    const grade = !home && gradeVisible() ? teamGrade() : null;
+    const building = ["spin", "pick", "full"].includes(state.phase);
     el.poster.innerHTML = `<div class="card">
       <div class="card-head"><div><p class="card-top">${esc(format.tourName)}${format.kind === "cup" ? ` · ${SURFACES[format.surface].toLowerCase()} at home` : ""}</p>
-      <h2 class="card-title">${format.copy.posterTitle}</h2></div><span class="card-count">${filledSingles}/${singlesSlots().length} · ${filledTeams}/${teams().length}</span></div>
+      <h2 class="card-title">${format.copy.posterTitle}</h2>
+      <p class="card-count">${filledSingles}/${singlesSlots().length} singles · ${filledTeams}/${teams().length} doubles</p></div>
+      ${grade ? `<div class="grade ${grade.complete ? "" : "is-partial"}" title="${grade.complete ? "Team grade" : "Team grade so far"}"><span class="grade-letter">${grade.letter}</span><span class="grade-score">${grade.score}${grade.complete ? "" : "<i>so far</i>"}</span></div>` : ""}</div>
       <p class="card-sub">Singles</p>
       <ol class="spots">${singlesSlots().map((s) => spotRow(s, { interactive: true })).join("")}</ol>
       <p class="card-sub">Doubles</p>
-      <ol class="teams">${teams().map((tm) => {
+      <ol class="teams">${teams().map((tm, ti, all) => {
         const [a, b] = tm.map((s) => state.lineup?.[s.id]);
+        const anyone = a || b;
         return `<li class="team"><ol class="spots">${tm.map((s) => spotRow(s, { interactive: true })).join("")}</ol>
-          <span class="team-tag">${visible && a && b ? `<b>${r1(pairRating(a, b))}</b>` : ""}${a && b && isRealPair(a, b) ? `<i>real pair</i>` : ""}</span></li>`;
+          <span class="team-tag">${visible && a && b ? `<b>${r1(pairRating(a, b))}</b>` : ""}${a && b && isRealPair(a, b) ? `<i>real pair</i>` : ""}
+          ${building && anyone && all.length > 1 ? `<span class="reorder is-vertical"><button data-moveteam="-1" data-team="${tm[0].team}" ${ti === 0 ? "disabled" : ""} aria-label="Move team up">↑</button><button data-moveteam="1" data-team="${tm[0].team}" ${ti === all.length - 1 ? "disabled" : ""} aria-label="Move team down">↓</button></span>` : ""}</span></li>`;
       }).join("")}</ol>
       <p class="card-foot">${home ? format.copy.footEmpty : state.phase === "pick" && !state.selected ? "Pick a player first." : state.phase === "season" || state.phase === "done" ? format.copy.surfaceNote : format.copy.seatHint}</p></div>`;
   }
@@ -644,6 +679,7 @@
     if (btn.dataset.fill) { seatFromRoster(btn.dataset.seatid, btn.dataset.fill); return; }
     if (btn.dataset.unseat) { clearSeat(btn.dataset.unseat); return; }
     if (btn.dataset.move) { moveSingles(btn.dataset.slotid, Number(btn.dataset.move)); return; }
+    if (btn.dataset.moveteam) { moveTeam(Number(btn.dataset.team), Number(btn.dataset.moveteam)); return; }
     switch (btn.dataset.action) {
       case "spin": spin(false); break;
       case "respin": spin(true); break;
