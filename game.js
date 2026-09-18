@@ -40,11 +40,14 @@
     { key: "hand", label: "Players per roll", options: [["6", "6"], ["8", "8"], ["10", "10"]] },
     { key: "stacking", label: "Stacking rule", options: [["on", "On"], ["off", "Off"]], dualOnly: true },
     { key: "eras", label: "Eras", options: [["all", "All"], ["classic", "1970s to 90s"], ["modern", "2000s on"]] },
+    { key: "timer", label: "Draft clock", options: [["0", "None"], ["2", "2 min"], ["5", "5 min"], ["10", "10 min"]] },
   ];
-  const ROOM_DEFAULTS = { mode: "classic", rolls: "shared", respins: "2", hand: "8", stacking: "on", eras: "all" };
+  const ROOM_DEFAULTS = { mode: "classic", rolls: "shared", respins: "2", hand: "8", stacking: "on", eras: "all", timer: "0" };
   const ERA_SETS = { all: null, classic: ["70s", "80s", "90s"], modern: ["00s", "10s", "20s"] };
-  const defaultRules = (mode) => ({ respins: MODES[mode].respins, hand: HAND_SIZE, stacking: true, eras: "all" });
-  const rulesFromRoom = (r) => ({ respins: r.respins, hand: r.hand, stacking: r.stacking, eras: r.eras });
+  const defaultRules = (mode) => ({ respins: MODES[mode].respins, hand: HAND_SIZE, stacking: true, eras: "all", timer: 0 });
+  const rulesFromRoom = (r) => ({ respins: r.respins, hand: r.hand, stacking: r.stacking, eras: r.eras, timer: r.timer || 0 });
+  // At least this many of your singles players have to be in the doubles lineup.
+  const MIN_SINGLES_IN_DOUBLES = { dual: 3, cup: 1 };
 
   let choice = { kind: "dual", tour: "atp", surface: "hard", room: { ...ROOM_DEFAULTS } };
   try { Object.assign(choice, JSON.parse(localStorage.getItem("sixlove-choice")) || {}); } catch { /* private window */ }
@@ -67,6 +70,12 @@
   const readMe = (code) => { try { return JSON.parse(localStorage.getItem(`sixlove-room-${code}`)); } catch { return null; } };
   const saveMe = (code, who) => { try { localStorage.setItem(`sixlove-room-${code}`, JSON.stringify(who)); } catch { /* private window */ } };
   const myEntry = () => room?.players.find((p) => p.id === me?.id);
+  const myResults = () => myEntry()?.results || [];
+  const roomRounds = () => Math.max(1, ...room.players.map((p) => (p.results || []).length));
+  const roundSeed = (round) => {
+    if (room.settings.rolls === "own") return hash(`${room.seed}-${me.id}-r${round}`);
+    return round === 1 ? room.seed : hash(`${room.seed}-r${round}`);
+  };
 
   async function api(action, body) {
     const res = await fetch(action === "get" ? `/api/room?code=${encodeURIComponent(body.code)}` : `/api/room?action=${action}`,
@@ -84,7 +93,7 @@
     const bits = [BUILDS[s.kind].name.replace(/^A /, ""), TOURS[s.tour].name, s.kind === "cup" ? `${SURFACES[s.surface].toLowerCase()} at home` : null,
       s.mode === "scout" ? "ratings hidden" : "ratings shown", s.rolls === "own" ? "everyone rolls their own" : "same rolls for everyone",
       `${s.respins} re-roll${s.respins === 1 ? "" : "s"}`, `${s.hand} per roll`, s.kind === "dual" ? `stacking ${s.stacking === false ? "off" : "on"}` : null,
-      s.eras === "classic" ? "1970s to 90s" : s.eras === "modern" ? "2000s on" : "all eras"];
+      s.eras === "classic" ? "1970s to 90s" : s.eras === "modern" ? "2000s on" : "all eras", s.timer ? `${s.timer} min draft clock` : null];
     return bits.filter(Boolean).join(" · ");
   }
   async function createRoom(name) {
@@ -92,7 +101,7 @@
     try {
       const r = choice.room;
       const data = await api("create", { name, settings: { kind: choice.kind, tour: choice.tour, surface: choice.surface, mode: r.mode,
-        rolls: r.rolls, respins: Number(r.respins), hand: Number(r.hand), stacking: r.stacking !== "off", eras: r.eras } });
+        rolls: r.rolls, respins: Number(r.respins), hand: Number(r.hand), stacking: r.stacking !== "off", eras: r.eras, timer: Number(r.timer) } });
       room = data.room; me = { id: data.playerId, name };
       saveMe(room.code, me);
       history.replaceState(null, "", `?room=${room.code}`);
@@ -132,8 +141,9 @@
     if (!room || !me) return;
     const points = state.results.reduce((sum, r) => sum + Number(r.score.split("-")[0]), 0);
     const g = teamGrade();
+    const team = { singles: singlesSlots().map((s) => state.lineup[s.id].name), doubles: pairs().map(([a, b]) => [a.name, b.name]), grade: g ? { letter: g.letter, score: g.score } : null };
     const lineup = [g ? `Grade ${g.letter} (${g.score})` : "", ...singlesSlots().map((s) => `${s.short}: ${state.lineup[s.id].name}`), ...pairs().map(([a, b]) => `Dbl: ${pairName(a, b)}`)].filter(Boolean).join("; ");
-    try { room = await api("result", { code: room.code, playerId: me.id, wins: wins(), total: state.results.length, points, grid: grid(), lineup }); }
+    try { room = await api("result", { code: room.code, playerId: me.id, round: state.roomRound || 1, wins: wins(), total: state.results.length, points, grid: grid(), lineup, team }); }
     catch (err) { roomError = err.message; }
     render();
   }
@@ -141,9 +151,9 @@
     stopPolling(); room = null; me = null; roomError = "";
     history.replaceState(null, "", location.pathname);
   }
-  // Rank: most wins, then most match points, then whoever finished first.
-  function standings() {
-    const done = room.players.filter((p) => p.result).sort((a, b) =>
+  // Rank one round: most wins, then most match points, then whoever finished first.
+  function standings(round) {
+    const done = room.players.map((p) => ({ ...p, result: (p.results || []).find((r) => r.round === round) || null })).filter((p) => p.result).sort((a, b) =>
       b.result.wins - a.result.wins || b.result.points - a.result.points || a.result.finishedAt - b.result.finishedAt);
     let place = 0;
     return done.map((p, i) => {
@@ -190,10 +200,15 @@
   const slotOf = (id) => format.slots.find((s) => s.id === id);
   const inDoubles = (p) => seatSlots().some((s) => state.lineup[s.id] === p);
   const inSingles = (p) => singlesSlots().some((s) => state.lineup[s.id] === p);
-  const cardFull = () => format.slots.every((s) => state.lineup[s.id]);
+  const cardFull = () => format.slots.every((s) => state.lineup[s.id]) && singlesStillNeeded() === 0;
   // Singles players who could still take a doubles seat.
   const benchForSeat = () => roster().filter((p) => !inDoubles(p));
   const pairs = () => teams().map((tm) => tm.map((s) => state.lineup[s.id])).filter((pr) => pr.every(Boolean));
+  const singlesInDoubles = () => new Set(seatSlots().map((s) => state.lineup[s.id]).filter((p) => p && inSingles(p))).size;
+  const seatsOpen = () => seatSlots().filter((s) => !state.lineup[s.id]).length;
+  const singlesStillNeeded = () => Math.max(0, MIN_SINGLES_IN_DOUBLES[format.kind] - singlesInDoubles());
+  // Can a player who is not on the singles ladder take a seat right now, leaving room for the singles players required?
+  const seatAllowsOutsider = () => seatsOpen() - 1 >= singlesStillNeeded();
   // The team grade: what the card is worth right now. A stacked line counts as the default it will be.
   function teamGrade() {
     if (!state.lineup) return null;
@@ -240,10 +255,18 @@
     render();
   }
 
-  function startGame(mode, seedOverride, rules = defaultRules(mode)) {
+  function startGame(mode, seedOverride, rules = defaultRules(mode), roomRound = 1) {
+    clearInterval(state.clock);
     const seed = seedOverride ?? (mode === "daily" ? hash(`sixlove-${today()}-${format.key}`) : (Math.random() * 2 ** 32) >>> 0);
-    state = { phase: "spin", mode, rules, rng: mulberry32(seed), round: 0, respins: rules.respins,
+    state = { phase: "spin", mode, rules, roomRound, rng: mulberry32(seed), round: 0, respins: rules.respins,
       pool: null, crate: [], lastPoolId: null, selected: null, lineup: {}, used: new Set(), seatPick: null, results: [], shown: 0 };
+    if (rules.timer) {
+      state.deadline = Date.now() + rules.timer * 60000;
+      state.clock = setInterval(() => {
+        if (!["spin", "spinning", "pick", "full"].includes(state.phase)) { clearInterval(state.clock); return; }
+        if (Date.now() >= state.deadline) { clearInterval(state.clock); timeUp(); } else renderStatus();
+      }, 1000);
+    }
     setLabel("Six", "Love");
     render();
     window.scrollTo({ top: 0, behavior: "auto" });
@@ -255,12 +278,7 @@
     if (state.phase === "spinning") return;
     if (isRespin) state.respins--;
     // One era per roll, never the same era twice running. Each roll deals a fresh weighted hand from that era.
-    const allowed = ERA_SETS[state.rules.eras];
-    const eligible = format.pools.filter((p) => !allowed || allowed.includes(p.id.split("-")[1]));
-    let options = eligible.filter((p) => p.id !== state.lastPoolId && availableItems(p).length >= state.rules.hand);
-    if (!options.length) options = eligible.filter((p) => availableItems(p).length >= 2);
-    const pool = options[Math.floor(state.rng() * options.length)];
-    const crate = dealHand(availableItems(pool), state.rng, state.rules.hand);
+    const { pool, crate, eligible } = drawHand();
     state.phase = "spinning";
     state.selected = null;
     render();
@@ -284,6 +302,49 @@
 
   function setLabel(era, scene) { el.era.textContent = era; el.scene.textContent = scene; }
 
+  function drawHand() {
+    const allowed = ERA_SETS[state.rules.eras];
+    const eligible = format.pools.filter((p) => !allowed || allowed.includes(p.id.split("-")[1]));
+    let options = eligible.filter((p) => p.id !== state.lastPoolId && availableItems(p).length >= state.rules.hand);
+    if (!options.length) options = eligible.filter((p) => availableItems(p).length >= 2);
+    const pool = options[Math.floor(state.rng() * options.length)];
+    return { pool, crate: dealHand(availableItems(pool), state.rng, state.rules.hand), eligible };
+  }
+
+  // The draft clock ran out: fill what is left sensibly, order the ladder, and play.
+  function timeUp() {
+    if (!["spin", "spinning", "pick", "full"].includes(state.phase)) return;
+    state.selected = null; state.seatPick = null;
+    const L = state.lineup;
+    let guard = 0;
+    while (!cardFull() && guard++ < 40) {
+      const openSingles = singlesSlots().filter((s) => !L[s.id]);
+      const openSeats = seatSlots().filter((s) => !L[s.id]);
+      if (openSingles.length) {
+        const { pool, crate } = drawHand();
+        state.lastPoolId = pool.id;
+        const best = [...crate].sort((a, b) => singles(b) - singles(a))[0];
+        L[openSingles[0].id] = best; state.used.add(best.id);
+      } else if (openSeats.length) {
+        const bench = benchForSeat();
+        if (bench.length && (!seatAllowsOutsider() || bench.some((p) => p.dbl >= 80))) {
+          L[openSeats[0].id] = [...bench].sort((a, b) => b.dbl - a.dbl)[0];
+        } else {
+          const { pool, crate } = drawHand();
+          state.lastPoolId = pool.id;
+          const best = [...crate].sort((a, b) => b.dbl - a.dbl)[0];
+          L[openSeats[0].id] = best; state.used.add(best.id);
+        }
+      } else break;
+    }
+    // Order the ladder by ability so nothing is stacked.
+    const ordered = singlesSlots().map((s) => L[s.id]).filter(Boolean).sort((a, b) => singles(b, "hard") - singles(a, "hard"));
+    singlesSlots().forEach((s, i) => { if (ordered[i]) L[s.id] = ordered[i]; });
+    state.phase = "full";
+    render();
+    playSeason();
+  }
+
   function selectItem(id) {
     state.seatPick = null;
     state.selected = state.selected?.id === id ? null : state.crate.find((p) => p.id === id);
@@ -292,6 +353,7 @@
 
   function placeItem(slotId) {
     if (!state.selected || state.lineup[slotId]) return;
+    if (slotOf(slotId).seat && !inSingles(state.selected) && !seatAllowsOutsider()) return;
     state.lineup[slotId] = state.selected;
     state.used.add(state.selected.id);
     state.selected = null;
@@ -386,6 +448,7 @@
 
   function playSeason() {
     if (!cardFull()) return;
+    clearInterval(state.clock); state.deadline = null;
     state.results = format.stages.map((stage, index) => (format.kind === "dual" ? playDual({ ...stage, index }) : playTie({ ...stage, index })));
     state.shown = 0;
     state.phase = "season";
@@ -446,7 +509,8 @@
     const text = state.phase === "season" || state.phase === "done" ? `${MODES[state.mode].name} · ${format.copy.running}`
       : state.phase === "full" ? `${MODES[state.mode].name} · card set`
       : `${MODES[state.mode].name} · pick ${state.round + 1}`;
-    el.status.innerHTML = `<span>${text}</span><button class="quit" data-action="home">Quit</button>`;
+    const clock = state.deadline && !["season", "done"].includes(state.phase) ? (() => { const left = Math.max(0, Math.ceil((state.deadline - Date.now()) / 1000)); return `<span class="clock ${left <= 30 ? "is-low" : ""}">${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}</span>`; })() : "";
+    el.status.innerHTML = `<span>${text}</span>${clock}<button class="quit" data-action="home">Quit</button>`;
   }
 
   function chips(name, options, current) {
@@ -495,14 +559,17 @@
       const mine = myEntry();
       const s = room.settings;
       const summary = roomSummary(s);
-      const finished = room.players.filter((x) => x.result).length;
+      const rounds = roomRounds(), latest = Math.min(state.viewRound || rounds, rounds);
+      const finished = room.players.filter((x) => (x.results || []).some((r) => r.round === latest)).length;
+      const played = myResults().length;
       el.console.innerHTML = `
         <p class="eyebrow">${esc(room.host)}'s room · ${esc(summary)}</p>
-        <h2>${!me ? `Join ${esc(room.host)}'s room` : mine?.result ? "Scoreboard" : "You're in"}</h2>
+        <h2>${!me ? `Join ${esc(room.host)}'s room` : played ? "Scoreboard" : "You're in"}</h2>
         ${!me ? `<p class="lede">Enter a name to join. ${s.rolls === "own" ? "Everyone rolls their own hands." : "Everyone gets the same rolls."} ${room.players.length} in so far.</p>
           <form class="friends-form" data-form="join"><input class="input" name="name" placeholder="Your name" maxlength="24" required autocomplete="nickname"><button class="primary" type="submit" ${roomBusy ? "disabled" : ""}>Join and play</button></form>`
-        : mine?.result ? `<p class="lede">${finished} of ${room.players.length} finished. This page updates on its own.</p>`
-        : `<p class="lede">Play when you're ready. Your result posts to the room when the season ends.</p>
+        : played ? `<p class="lede">Round ${latest}: ${finished} of ${room.players.length} finished. This page updates on its own.${s.timer ? ` Draft clock: ${s.timer} min.` : ""}</p>
+           <button class="primary" data-action="playroom">Play again · round ${played + 1}</button>`
+        : `<p class="lede">Play when you're ready. Your result posts to the room when the season ends.${s.timer ? ` You'll have ${s.timer} minutes to draft.` : ""}</p>
            <button class="primary" data-action="playroom">Play your season</button>`}
         <div class="share"><span class="share-link">${esc(roomLink())}</span><button class="secondary" data-action="copylink">Copy link</button></div>
         ${roomError ? `<p class="warn">${esc(roomError)}</p>` : ""}`;
@@ -512,10 +579,11 @@
       const openSingles = singlesSlots().filter((s) => !state.lineup[s.id]).length;
       const openSeats = seatSlots().filter((s) => !state.lineup[s.id]).length;
       const seatsOnly = !openSingles && openSeats;
+      const needSingles = singlesStillNeeded();
       el.console.innerHTML = `
         <p class="eyebrow">${state.round === 0 ? "First pick" : `Pick ${state.round + 1}`} · ${openSingles} singles ${openSingles === 1 ? "spot" : "spots"}, ${openSeats} doubles ${openSeats === 1 ? "seat" : "seats"} open</p>
         <h2>${p === "spinning" ? "Rolling…" : seatsOnly ? "Fill the doubles" : "Roll for an era"}</h2>
-        <p class="lede">${p === "spinning" ? "The ball's in the air." : seatsOnly ? copy.seatHint : "Every roll deals eight players from one era. Legends are rare; journeymen and doubles specialists are not."}</p>
+        <p class="lede">${p === "spinning" ? "The ball's in the air." : seatsOnly ? `${needSingles ? `${needSingles} more doubles seat${needSingles === 1 ? "" : "s"} must go to your singles players. ` : ""}${copy.seatHint}` : `Every roll deals ${state.rules.hand} players from one era. Legends are rare; journeymen and doubles specialists are not.`}</p>
         <div class="row"><button class="primary" data-action="spin" ${p === "spinning" ? "disabled" : ""}>Roll</button>
         ${openSeats && benchForSeat().length && p !== "spinning" ? `<button class="secondary" data-action="seatpick">Seat a singles player</button>` : ""}</div>`;
       return;
@@ -552,18 +620,30 @@
   }
 
   function scoreboardHtml() {
-    const ranked = standings();
-    const waiting = room.players.filter((x) => !x.result);
+    const rounds = roomRounds(), round = Math.min(state.viewRound || rounds, rounds);
+    const ranked = standings(round);
+    const waiting = room.players.filter((x) => !(x.results || []).some((r) => r.round === round));
     const n = room.players.length;
+    const teamHtml = (r) => r.team ? `<div class="standing-team">
+        ${r.team.grade ? `<span>Team grade <b>${esc(r.team.grade.letter)}</b> (${r.team.grade.score})</span>` : ""}
+        <span class="sub">Singles</span>${r.team.singles.map((nm, i) => `<span>No. ${i + 1} <b>${esc(nm)}</b></span>`).join("")}
+        <span class="sub">Doubles</span>${r.team.doubles.map((pr, i) => `<span>${r.team.doubles.length > 1 ? `Dbl ${i + 1} ` : ""}<b>${esc(pr.join(" / "))}</b></span>`).join("")}
+        ${r.grid ? `<span class="sub">Results</span><span>${esc(r.grid)}</span>` : ""}</div>` : r.lineup ? `<div class="standing-team"><span>${esc(r.lineup)}</span></div>` : "";
+    const totals = rounds > 1 ? room.players.map((x) => ({ name: x.name, id: x.id, wins: (x.results || []).reduce((a, r) => a + r.wins, 0), played: (x.results || []).length }))
+      .sort((a, b) => b.wins - a.wins || a.played - b.played) : [];
     return `<div class="board-card">
-      <div class="board-head"><span>Scoreboard</span><span class="board-count">${ranked.length}/${n} done</span></div>
-      <ol class="standings">${ranked.map((x) => `<li class="standing ${x.id === me?.id ? "is-me" : ""} place-${x.place}">
+      <div class="board-head"><span>Scoreboard${rounds > 1 ? ` · round ${round}` : ""}</span>
+        ${rounds > 1 ? `<span class="rounds">${Array.from({ length: rounds }, (_, i) => `<button class="round-btn" data-action="viewround" data-round="${i + 1}" aria-pressed="${i + 1 === round}">R${i + 1}</button>`).join("")}</span>` : `<span class="board-count">${ranked.length}/${n} done</span>`}</div>
+      <ol class="standings">${ranked.map((x) => `<li class="standing ${x.id === me?.id ? "is-me" : ""} ${state.expanded === x.id ? "is-open" : ""} place-${x.place}">
+        <button class="standing-btn" data-expand="${esc(x.id)}" aria-expanded="${state.expanded === x.id}">
         <span class="standing-place">${ordinal(x.place)}</span>
-        <span class="standing-name">${esc(x.name)}${x.id === me?.id ? " <small>you</small>" : ""}<span class="standing-lineup">${esc(x.result.lineup)}</span></span>
-        <span class="standing-record">${x.result.wins}–${x.result.total - x.result.wins}<small>${x.result.points} pts</small></span>
+        <span class="standing-name">${esc(x.name)}${x.id === me?.id ? " <small>you</small>" : ""}<span class="standing-lineup">${state.expanded === x.id ? "Tap to hide" : "Tap to see the team"}</span></span>
+        <span class="standing-record">${x.result.wins}–${x.result.total - x.result.wins}<small>${x.result.points} pts${x.result.team?.grade ? ` · ${esc(x.result.team.grade.letter)}` : ""}</small></span></button>
+        ${state.expanded === x.id ? teamHtml(x.result) : ""}
       </li>`).join("")}
-      ${waiting.map((x) => `<li class="standing is-waiting"><span class="standing-place">…</span><span class="standing-name">${esc(x.name)}${x.id === me?.id ? " <small>you</small>" : ""}</span><span class="standing-record"><small>still playing</small></span></li>`).join("")}</ol>
-      ${!n ? "" : `<p class="board-foot">Ranked by wins, then match points won.</p>`}</div>`;
+      ${waiting.map((x) => `<li class="standing is-waiting"><span class="standing-place">…</span><span class="standing-name">${esc(x.name)}${x.id === me?.id ? " <small>you</small>" : ""}</span><span class="standing-record"><small>${(x.results || []).length ? "not played this round" : "still playing"}</small></span></li>`).join("")}</ol>
+      ${totals.length ? `<p class="board-foot">Across all rounds</p><ol class="totals">${totals.map((t) => `<li><span>${esc(t.name)} <small>${t.played} round${t.played === 1 ? "" : "s"}</small></span><b>${t.wins} wins</b></li>`).join("")}</ol>` : ""}
+      <p class="board-foot">Ranked by wins, then match points won.</p></div>`;
   }
 
   function playerMeta(a) {
@@ -599,7 +679,7 @@
           <span class="result-lines">${r.lines.filter((x) => x.point).map((x) => `<span class="line ${x.won === null ? "is-dead" : x.won ? "is-win" : "is-loss"} ${x.stacked ? "is-stacked" : ""}"
             title="${esc(x.label)}${x.who ? `: ${esc(x.who)}` : ""}${x.stacked ? " (stacked, defaulted)" : x.won === null ? " (not needed)" : x.won ? " won" : " lost"}">${x.stacked ? "S" : x.won === null ? "·" : x.doubles ? "D" : x.won ? "W" : "L"}</span>`).join("")}</span>
         </li>`).join("")}</ol>`;
-      el.crate.lastElementChild?.lastElementChild?.scrollIntoView({ block: "nearest", behavior: reducedMotion ? "auto" : "smooth" });
+      if (p === "season") el.crate.lastElementChild?.lastElementChild?.scrollIntoView({ block: "nearest", behavior: reducedMotion ? "auto" : "smooth" });
       return;
     }
     el.crate.innerHTML = "";
@@ -620,6 +700,9 @@
         : removable ? `<button class="unseat" data-unseat="${s.id}" aria-label="Clear seat">×</button>` : visible ? `<span class="spot-score">${isStacked ? "Stacked" : s.seat ? "" : r1(singles(p))}</span>` : ""}</li>`;
     }
     if (interactive && state.phase === "pick" && state.selected) {
+      if (s.seat && !inSingles(state.selected) && !seatAllowsOutsider()) {
+        return `<li class="spot is-open"><button class="place is-blocked" disabled><span class="spot-name">${s.short}</span><span class="spot-player">Kept for a singles player</span></button></li>`;
+      }
       const bad = s.singles && stackingVisible() ? stackingIfPlaced(s.id) : [];
       return `<li class="spot is-open"><button class="place ${bad.length ? "is-bad" : ""}" data-slot="${s.id}">
         <span class="spot-name">${s.short}</span><span class="spot-player">Place here</span>
@@ -654,7 +737,7 @@
           <span class="team-tag">${visible && a && b ? `<b>${r1(pairRating(a, b))}</b>` : ""}${a && b && isRealPair(a, b) ? `<i>real pair</i>` : ""}
           ${building && anyone && all.length > 1 ? `<span class="reorder is-vertical"><button data-moveteam="-1" data-team="${tm[0].team}" ${ti === 0 ? "disabled" : ""} aria-label="Move team up">↑</button><button data-moveteam="1" data-team="${tm[0].team}" ${ti === all.length - 1 ? "disabled" : ""} aria-label="Move team down">↓</button></span>` : ""}</span></li>`;
       }).join("")}</ol>
-      <p class="card-foot">${home ? format.copy.footEmpty : state.phase === "pick" && !state.selected ? "Pick a player first." : state.phase === "season" || state.phase === "done" ? format.copy.surfaceNote : format.copy.seatHint}</p></div>`;
+      <p class="card-foot">${home ? format.copy.footEmpty : state.phase === "pick" && !state.selected ? "Pick a player first." : state.phase === "season" || state.phase === "done" ? format.copy.surfaceNote : `${format.copy.seatHint} At least ${MIN_SINGLES_IN_DOUBLES[format.kind]} of your singles players must play doubles${singlesStillNeeded() ? ` (${singlesStillNeeded()} to go)` : ""}.`}</p></div>`;
   }
 
   // Phones: a bottom sheet for placing the selected player, so the lineup card needn't be on screen.
@@ -687,7 +770,9 @@
       <p class="sheet-sub">Doubles</p>
       <div class="sheet-slots is-seats">${seatSlots().map((s) => state.lineup[s.id]
         ? `<span class="sheet-slot is-filled"><span>${seatLabel(s)}</span><small>${esc(lineName(state.lineup[s.id]))}</small></span>`
-        : `<button class="sheet-slot" data-slot="${s.id}"><span>${seatLabel(s)}</span><small>Open</small></button>`).join("")}</div></div>`;
+        : !inSingles(p) && !seatAllowsOutsider() ? `<span class="sheet-slot is-blocked"><span>${seatLabel(s)}</span><small>Singles only</small></span>`
+        : `<button class="sheet-slot" data-slot="${s.id}"><span>${seatLabel(s)}</span><small>Open</small></button>`).join("")}</div>
+      ${!inSingles(p) && singlesStillNeeded() ? `<p class="sheet-sub">${singlesStillNeeded()} more seat${singlesStillNeeded() === 1 ? "" : "s"} must go to singles players</p>` : ""}</div>`;
   }
 
   // ---------- events ----------
@@ -712,6 +797,7 @@
     if (btn.dataset.unseat) { clearSeat(btn.dataset.unseat); return; }
     if (btn.dataset.move) { moveSingles(btn.dataset.slotid, Number(btn.dataset.move)); return; }
     if (btn.dataset.moveteam) { moveTeam(Number(btn.dataset.team), Number(btn.dataset.moveteam)); return; }
+    if (btn.dataset.expand) { state.expanded = state.expanded === btn.dataset.expand ? null : btn.dataset.expand; render(); return; }
     switch (btn.dataset.action) {
       case "spin": spin(false); break;
       case "respin": spin(true); break;
@@ -722,10 +808,11 @@
       case "share":
         navigator.clipboard?.writeText(shareText()).then(() => { btn.textContent = "Copied"; setTimeout(() => (btn.textContent = "Copy result"), 1500); }).catch(() => {});
         break;
-      case "home": clearInterval(state.timer); state = room ? { phase: "room" } : { phase: "home" }; setLabel("Six", "Love"); render(); break;
+      case "home": clearInterval(state.timer); clearInterval(state.clock); state = room ? { phase: "room" } : { phase: "home" }; setLabel("Six", "Love"); render(); break;
       case "leave": leaveRoom(); state = { phase: "home" }; render(); break;
-      case "playroom": applyRoomSettings(); startGame(room.settings.mode, room.settings.rolls === "own" ? hash(`${room.seed}-${me.id}`) : room.seed, rulesFromRoom(room.settings)); break;
-      case "scoreboard": clearInterval(state.timer); state = { phase: "room" }; setLabel("Six", "Love"); render(); window.scrollTo({ top: 0 }); break;
+      case "playroom": { applyRoomSettings(); const round = myResults().length + 1; startGame(room.settings.mode, roundSeed(round), rulesFromRoom(room.settings), round); break; }
+      case "viewround": state.viewRound = Number(btn.dataset.round); render(); break;
+      case "scoreboard": clearInterval(state.timer); clearInterval(state.clock); state = { phase: "room" }; setLabel("Six", "Love"); render(); window.scrollTo({ top: 0 }); break;
       case "copylink":
         navigator.clipboard?.writeText(roomLink()).then(() => { btn.textContent = "Copied"; setTimeout(() => (btn.textContent = "Copy link"), 1500); }).catch(() => {});
         break;

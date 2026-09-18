@@ -25,6 +25,7 @@ body[data-surface="grass"] { --court: #2f8f4a; --accent-2: #9df5a3; --bg-2: #0f2
 
 *, *::before, *::after { box-sizing: border-box; }
 html { color-scheme: dark; }
+html { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
   margin: 0;
   min-height: 100vh;
@@ -370,3 +371,22 @@ body[data-phase="home"] .draw { align-items: start; }
   .sheet-slots.is-seats { grid-template-columns: repeat(3, 1fr); }
   body[data-phase="spin"] .crate, body[data-phase="full"] .crate { padding-bottom: 0; }
 }
+
+/* ---------- rounds, clock, expanded scoreboard rows ---------- */
+.clock { font: 600 0.875rem/1 var(--mono); color: var(--accent); padding: 0.3rem 0.6rem; border-radius: 999px; background: color-mix(in srgb, var(--accent) 14%, var(--panel)); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+.clock.is-low { color: var(--loss); background: color-mix(in srgb, var(--loss) 14%, var(--panel)); border-color: color-mix(in srgb, var(--loss) 45%, transparent); }
+.rounds { display: inline-flex; gap: 0.25rem; padding: 0.2rem; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border); }
+.round-btn { padding: 0.25rem 0.7rem; border: 0; border-radius: 999px; background: transparent; font: 600 0.75rem/1 var(--mono); color: var(--muted); }
+.round-btn[aria-pressed="true"] { background: var(--text); color: var(--bg); }
+.standing-btn { display: contents; }
+.standing { cursor: pointer; }
+.standing.is-open { border-color: var(--border-strong); }
+.standing-team { grid-column: 1 / -1; display: grid; gap: 0.25rem; padding: 0.4rem 0 0.1rem; border-top: 1px dashed var(--border); margin-top: 0.3rem; font-size: 0.8125rem; color: var(--muted); }
+.standing-team b { color: var(--text); font-weight: 600; }
+.standing-team .sub { font-size: 0.625rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); margin-top: 0.25rem; }
+.totals { margin-top: 0.75rem; display: grid; gap: 0.25rem; }
+.totals li { display: flex; justify-content: space-between; gap: 0.5rem; padding: 0.35rem 0.6rem; border-radius: var(--r-sm); background: var(--panel); font-size: 0.8125rem; }
+.totals li b { font: 600 0.8125rem/1 var(--mono); }
+.place.is-blocked { border-style: dashed; border-color: var(--border-strong); opacity: 0.7; cursor: not-allowed; }
+.place.is-blocked .spot-player { color: var(--muted); font-size: 0.75rem; font-weight: 500; }
+.sheet-slot.is-blocked { border-color: var(--border); color: var(--faint); opacity: 0.7; }

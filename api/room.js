@@ -29,8 +29,16 @@ async function loadRoom(roomCode) {
   const files = await readAll(`rooms/${roomCode}/`);
   const room = files.find((f) => f.path.endsWith("/room.json"))?.data;
   if (!room) return null;
-  const results = Object.fromEntries(files.filter((f) => f.path.includes("/r/")).map((f) => [f.data.playerId, f.data]));
-  const players = files.filter((f) => f.path.includes("/p/")).map((f) => ({ ...f.data, result: results[f.data.id] || null }));
+  // Results are one file per player per round. Older rooms have one file per player: that is round 1.
+  const results = {};
+  for (const f of files.filter((x) => x.path.includes("/r/"))) {
+    const round = Number(f.data.round) || 1;
+    (results[f.data.playerId] ||= [])[round - 1] = { ...f.data, round };
+  }
+  const players = files.filter((f) => f.path.includes("/p/")).map((f) => {
+    const list = (results[f.data.id] || []).filter(Boolean).sort((a, b) => a.round - b.round);
+    return { ...f.data, results: list, result: list[0] || null };
+  });
   return { ...room, players };
 }
 
@@ -54,7 +62,7 @@ export default async function handler(req, res) {
         surface: SURFACES.includes(s.surface) ? s.surface : "hard", mode: MODES.includes(s.mode) ? s.mode : "classic",
         rolls: ROLLS.includes(s.rolls) ? s.rolls : "shared", respins: Math.max(0, Math.min(3, Number(s.respins) || 0)),
         hand: HANDS.includes(Number(s.hand)) ? Number(s.hand) : 8, stacking: s.stacking !== false && s.stacking !== "off",
-        eras: ERAS.includes(s.eras) ? s.eras : "all",
+        eras: ERAS.includes(s.eras) ? s.eras : "all", timer: [0, 2, 5, 10].includes(Number(s.timer)) ? Number(s.timer) : 0,
       };
       const name = clean(body.name, 24) || "Host";
       const player = { id: id(), name, joinedAt: Date.now() };
@@ -84,12 +92,20 @@ export default async function handler(req, res) {
       const room = await loadRoom(roomCode);
       if (!room) return res.status(404).json({ error: "No such room" });
       if (!room.players.some((p) => p.id === playerId)) return res.status(403).json({ error: "Not in this room" });
-      if (room.players.find((p) => p.id === playerId).result) return res.json(room);
-      const result = {
-        playerId, wins: Math.max(0, Math.min(20, Number(body.wins) || 0)), total: Math.max(1, Math.min(20, Number(body.total) || 1)),
-        points: Math.max(0, Math.min(200, Number(body.points) || 0)), grid: clean(body.grid, 40), lineup: clean(body.lineup, 600), finishedAt: Date.now(),
+      const round = Math.max(1, Math.min(50, Math.floor(Number(body.round)) || 1));
+      const mine = room.players.find((p) => p.id === playerId);
+      if (mine.results.some((r) => r.round === round)) return res.json(room);
+      const t = body.team || {};
+      const team = {
+        singles: Array.isArray(t.singles) ? t.singles.slice(0, 8).map((x) => clean(x, 40)) : [],
+        doubles: Array.isArray(t.doubles) ? t.doubles.slice(0, 4).map((pr) => (Array.isArray(pr) ? pr.slice(0, 2).map((x) => clean(x, 40)) : [])) : [],
+        grade: t.grade ? { letter: clean(t.grade.letter, 3), score: Math.max(0, Math.min(99, Number(t.grade.score) || 0)) } : null,
       };
-      await write(`rooms/${roomCode}/r/${playerId}.json`, result);
+      const result = {
+        playerId, round, wins: Math.max(0, Math.min(20, Number(body.wins) || 0)), total: Math.max(1, Math.min(20, Number(body.total) || 1)),
+        points: Math.max(0, Math.min(200, Number(body.points) || 0)), grid: clean(body.grid, 40), lineup: clean(body.lineup, 600), team, finishedAt: Date.now(),
+      };
+      await write(`rooms/${roomCode}/r/${playerId}-${round}.json`, result);
       return res.json(await loadRoom(roomCode));
     }
     return res.status(400).json({ error: "Unknown action" });
