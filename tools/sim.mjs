@@ -2,8 +2,8 @@
 import fs from "node:fs";
 import vm from "node:vm";
 const src = ["players.js", "formats.js"].map((f) => fs.readFileSync(new URL(`../${f}`, import.meta.url), "utf8")).join("\n");
-const { ATP, WTA, singlesRating, pairRating, SEASON, DUAL_LADDER, DUAL_DOUBLES, CUP_RUN, CUP_LADDER, CUP_RUBBERS, matchup, finaleBonus, FAMILIES } =
-  vm.runInNewContext(`${src}\n;({ ATP, WTA, singlesRating, pairRating, SEASON, DUAL_LADDER, DUAL_DOUBLES, CUP_RUN, CUP_LADDER, CUP_RUBBERS, matchup, finaleBonus, FAMILIES })`);
+const { ATP, WTA, singlesRating, pairRating, SEASON, DUAL_LADDER, DUAL_DOUBLES, CUP_RUN, CUP_LADDER, CUP_RUBBERS, matchup, finaleBonus, FAMILIES, dealHand } =
+  vm.runInNewContext(`${src}\n;({ ATP, WTA, singlesRating, pairRating, SEASON, DUAL_LADDER, DUAL_DOUBLES, CUP_RUN, CUP_LADDER, CUP_RUBBERS, matchup, finaleBonus, FAMILIES, dealHand })`);
 const WIDTH = Number(process.argv[2] || 4);
 const OFFSET = Number(process.argv[3] || 0);
 const toP = (r) => { const [era, name, cc, years, style, slams, college, serve, rtn, rally, net, clutch, dbl, hard, clay, grass] = r; return { era, name, cc, style, slams, serve, rtn, rally, net, clutch, dbl, hard, clay, grass }; };
@@ -27,7 +27,7 @@ function draftDual(players, strategy) {
   const eras = Object.keys(byEra);
   const picks = [];
   for (let i = 0; i < 8; i++) {
-    const pool = byEra[eras[Math.floor(Math.random() * eras.length)]].filter((p) => !picks.includes(p));
+    const pool = dealHand(byEra[eras[Math.floor(Math.random() * eras.length)]].filter((p) => !picks.includes(p)), Math.random);
     const key = i >= 6 ? (p) => p.dbl : (p) => singlesRating(p, "hard");
     const ranked = [...pool].sort((a, b) => key(b) - key(a));
     picks.push(strategy === "best" ? ranked[0] : strategy === "median" ? ranked[Math.floor(ranked.length / 2)] : pool[Math.floor(Math.random() * pool.length)]);
@@ -52,7 +52,7 @@ function draftCup(players, strategy, surface) {
   const eras = Object.keys(byEra);
   const picks = [];
   for (let i = 0; i < 4; i++) {
-    const pool = byEra[eras[Math.floor(Math.random() * eras.length)]].filter((p) => !picks.includes(p));
+    const pool = dealHand(byEra[eras[Math.floor(Math.random() * eras.length)]].filter((p) => !picks.includes(p)), Math.random);
     const ranked = [...pool].sort((a, b) => singlesRating(b, surface) - singlesRating(a, surface));
     picks.push(strategy === "best" ? ranked[0] : strategy === "median" ? ranked[Math.floor(ranked.length / 2)] : pool[Math.floor(Math.random() * pool.length)]);
   }
@@ -75,6 +75,14 @@ function playCup(team, home) {
 }
 for (const [tourName, tour] of [["ATP", ATP], ["WTA", WTA]]) {
   const players = tour.map(toP);
+  { // the dream team: six best singles in the tour, three best disjoint pairs from them plus the six best doubles players
+    const ladder = [...players].sort((a, b) => singlesRating(b, "hard") - singlesRating(a, "hard")).slice(0, 6);
+    const dblPool = [...players].sort((a, b) => b.dbl - a.dbl).slice(0, 6);
+    const team = { ladder, pairs: bestPairs([...ladder, ...dblPool], 3) };
+    const N = 2000; let perfect = 0, total = 0;
+    for (let n = 0; n < N; n++) { const w = playSeason(team); total += w; if (w === 12) perfect++; }
+    console.log(tourName, "INSANE mean", (total / N).toFixed(2), "perfect", (100 * perfect / N).toFixed(1) + "%");
+  }
   for (const strategy of ["best", "median", "random"]) {
     const N = 4000; let perfect = 0, total = 0; const hist = new Array(13).fill(0);
     for (let n = 0; n < N; n++) { const w = playSeason(draftDual(players, strategy)); total += w; hist[w]++; if (w === 12) perfect++; }

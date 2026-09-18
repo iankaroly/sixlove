@@ -88,6 +88,25 @@ function chemistry(a, b) {
 }
 const pairRating = (a, b) => 0.5 * (a.dbl + b.dbl) / 2 + 0.2 * (a.net + b.net) / 2 + 0.15 * (a.serve + b.serve) / 2 + 0.15 * (a.rtn + b.rtn) / 2 + chemistry(a, b);
 
+// Each roll deals a hand from the era. Legends are rare, doubles specialists turn up often enough to matter.
+const HAND_SIZE = 8;
+function dealWeight(p) {
+  const r = singlesRating(p, "hard");
+  if (p.dbl >= 92 && r < 80) return 0.9;
+  return r >= 91 ? 0.1 : r >= 87 ? 0.25 : r >= 82 ? 0.5 : r >= 76 ? 0.8 : 1;
+}
+// Weighted sample without replacement, driven by the game's seeded rng so rooms and dailies stay identical.
+function dealHand(players, rng, size = HAND_SIZE) {
+  const pool = players.map((p) => ({ p, w: dealWeight(p) }));
+  const hand = [];
+  while (hand.length < size && pool.length) {
+    let total = pool.reduce((s, x) => s + x.w, 0), r = rng() * total, i = 0;
+    for (; i < pool.length - 1; i++) { r -= pool[i].w; if (r <= 0) break; }
+    hand.push(pool.splice(i, 1)[0].p);
+  }
+  return hand;
+}
+
 // NCAA rule: the ladder must run in order of ability. A spot may be this much stronger than the spot above it.
 const STACK_TOLERANCE = 4;
 
@@ -104,12 +123,12 @@ const DUAL_DOUBLES = [2, 0, -2];               // and by doubles line
 
 // Twelve duals, from a soft opener to the NCAA final.
 const SEASON = [
-  ["Ohio State", "Season opener, Columbus", 73], ["Michigan", "Ann Arbor", 75],
-  ["Baylor", "ITA Indoor, Chicago", 77], ["Tennessee", "Knoxville", 79],
-  ["Florida", "Gainesville", 81], ["Georgia", "Athens", 83],
-  ["Texas", "Austin", 84], ["Wake Forest", "Conference final", 86],
-  ["Virginia", "NCAA round of 16", 87], ["TCU", "NCAA quarterfinal", 89],
-  ["Stanford", "NCAA semifinal", 91], ["USC", "NCAA final", 93],
+  ["Ohio State", "Season opener, Columbus", 62], ["Michigan", "Ann Arbor", 64],
+  ["Baylor", "ITA Indoor, Chicago", 66], ["Tennessee", "Knoxville", 68],
+  ["Florida", "Gainesville", 70], ["Georgia", "Athens", 72],
+  ["Texas", "Austin", 73], ["Wake Forest", "Conference final", 75],
+  ["Virginia", "NCAA round of 16", 77], ["TCU", "NCAA quarterfinal", 79],
+  ["Stanford", "NCAA semifinal", 81], ["USC", "NCAA final", 83],
 ];
 
 // A cup tie: two singles players and a doubles pair. Five rubbers, first to three.
@@ -119,10 +138,10 @@ const CUP_SLOTS = [
 ];
 // Seven ties. Surface null means your home surface.
 const CUP_RUN = [
-  ["Canada", "Qualifier, at home", null, 78], ["Australia", "Group stage, at home", null, 81],
-  ["Argentina", "Group stage, Buenos Aires", "clay", 84], ["Great Britain", "Group stage, Eastbourne", "grass", 86],
-  ["France", "Quarterfinal, at home", null, 88], ["Spain", "Semifinal, Madrid", "clay", 91],
-  ["Italy", "Final, Bologna", "hard", 94],
+  ["Canada", "Qualifier, at home", null, 66], ["Australia", "Group stage, at home", null, 69],
+  ["Argentina", "Group stage, Buenos Aires", "clay", 72], ["Great Britain", "Group stage, Eastbourne", "grass", 75],
+  ["France", "Quarterfinal, at home", null, 78], ["Spain", "Semifinal, Madrid", "clay", 81],
+  ["Italy", "Final, Bologna", "hard", 84],
 ];
 const CUP_LADDER = { 1: 3, 2: -3, 0: 0 };  // their No. 1, No. 2 and doubles pair, relative to the tie's rating
 // The five rubbers in order: [my slot, their line]. Play stops once a side has three.
@@ -134,15 +153,15 @@ function opponentStyle(stageTitle, line) {
   for (const ch of `${stageTitle}#${line}`) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); }
   return FAMILIES[(h >>> 0) % FAMILIES.length];
 }
-// Every match is decided by a logistic on the rating gap. Four points of gap is about 73-27.
-const MATCH_WIDTH = 4;
+// Every match is decided by a logistic on the rating gap. Five points of gap is about 88-12, so class tells.
+const MATCH_WIDTH = 2.5;
 const winChance = (mine, theirs) => 1 / (1 + Math.exp(-(mine - theirs) / MATCH_WIDTH));
 
 const BUILDS = {
   dual: {
     name: "A college team",
     headline: "Draft six pros. Win the national title.",
-    lede: "Roll, and every player in the pool comes from one era, legends included. Take one and give them a spot: the singles ladder, No. 1 to No. 6, or a seat on Doubles 1, 2 or 3. Singles players can be seated in doubles too. When the card is full, play a twelve-dual season and try to go 12-0.",
+    lede: "Roll, and you get a hand of eight from one era: a different eight every time, from journeymen and doubles specialists up to, once in a while, a legend. Take one and give them a spot: the singles ladder, No. 1 to No. 6, or a seat on Doubles 1, 2 or 3. Singles players can be seated in doubles too. When the card is full, play a twelve-dual season and try to go 12-0.",
     rule: "The ladder has to run in order of ability. Put a clearly better player below a weaker one and the NCAA calls it stacking: that line is defaulted every match.",
     knowledge: "The bars are only part of it. Big-match nerve, what a player actually won, surface, style matchups and doubles chemistry all count, and none of it is printed on the card. Servers get neutralised by great returners, volleyers get passed by power hitters, retrievers grind power down. Two net players click in doubles; real-life partners click more.",
     posterTitle: "Lineup card", footEmpty: "Six singles spots and three doubles teams. No. 1 faces their best player, No. 6 their weakest. Doubles 1 faces their best pair.",

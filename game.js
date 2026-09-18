@@ -210,10 +210,10 @@
   function spin(isRespin) {
     if (state.phase === "spinning") return;
     if (isRespin) state.respins--;
-    // One era per roll, never the same era twice running. Everyone from that era is in the pool, legends included.
-    const options = format.pools.filter((p) => p.id !== state.lastPoolId && availableItems(p).length >= 3);
+    // One era per roll, never the same era twice running. Each roll deals a fresh weighted hand from that era.
+    const options = format.pools.filter((p) => p.id !== state.lastPoolId && availableItems(p).length >= HAND_SIZE);
     const pool = options[Math.floor(state.rng() * options.length)];
-    const crate = availableItems(pool);
+    const crate = dealHand(availableItems(pool), state.rng);
     state.phase = "spinning";
     state.selected = null;
     render();
@@ -454,7 +454,7 @@
       el.console.innerHTML = `
         <p class="eyebrow">${state.round === 0 ? "First pick" : `Pick ${state.round + 1}`} · ${openSingles} singles ${openSingles === 1 ? "spot" : "spots"}, ${openSeats} doubles ${openSeats === 1 ? "seat" : "seats"} open</p>
         <h2>${p === "spinning" ? "Rolling…" : seatsOnly ? "Fill the doubles" : "Roll for an era"}</h2>
-        <p class="lede">${p === "spinning" ? "The ball's in the air." : seatsOnly ? copy.seatHint : "Every roll lands on one era. Everyone in that pool played in it, legends included."}</p>
+        <p class="lede">${p === "spinning" ? "The ball's in the air." : seatsOnly ? copy.seatHint : "Every roll deals eight players from one era. Legends are rare; journeymen and doubles specialists are not."}</p>
         <div class="row"><button class="primary" data-action="spin" ${p === "spinning" ? "disabled" : ""}>Roll</button>
         ${openSeats && benchForSeat().length && p !== "spinning" ? `<button class="secondary" data-action="seatpick">Seat a singles player</button>` : ""}</div>`;
       return;
