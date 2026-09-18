@@ -183,7 +183,8 @@
     else score = singlesScores.length ? mean(singlesScores) : mean(pairScores);
     return { score: Math.round(score), letter: gradeLetter(score), complete };
   }
-  const gradeVisible = () => Boolean(MODES[state.mode]?.showRatings) || state.phase === "full" || ratingsVisible();
+  // The grade is revealed with the result, never while the card is being built.
+  const gradeVisible = () => ratingsVisible();
 
   // The ladder rule. Compares each filled singles spot with the nearest filled spot above it.
   function stackedLines(lineup) {
@@ -501,7 +502,7 @@
     if (p === "full") {
       const stacked = stackedLines(state.lineup);
       el.console.innerHTML = `
-        <p class="eyebrow">Card complete${(() => { const g = teamGrade(); return g ? ` · team grade ${g.letter} (${g.score})` : ""; })()}</p>
+        <p class="eyebrow">Card complete</p>
         <h2>${copy.fullTitle}</h2>
         <p class="lede">${copy.fullLede}</p>
         ${stacked.size && stackingVisible() ? `<p class="warn">Stacked ladder: ${[...stacked].map((id) => slotOf(id).name).join(", ")} will be defaulted.</p>` : ""}
