@@ -2,18 +2,20 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Six-Love: draft a tennis team, win the title</title>
-  <meta name="description" content="Draft pros from every era into a college ladder or a nation cup team, then play the season. A tennis take on the 20-0 roster game.">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Ccircle cx=%2716%27 cy=%2716%27 r=%2716%27 fill=%27%23d8f23a%27/%3E%3Cpath d=%27M6 4a16 16 0 0 1 0 24M26 4a16 16 0 0 0 0 24%27 fill=%27none%27 stroke=%27%23fff%27 stroke-width=%272.4%27/%3E%3C/svg%3E">
+  <meta name="description" content="Draft pros from every era into a college ladder or a nation cup team, set your doubles, then play the season. A tennis take on the 20-0 roster game.">
+  <meta name="theme-color" content="#0b1411">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Ccircle cx=%2716%27 cy=%2716%27 r=%2716%27 fill=%27%23c8ff3d%27/%3E%3Cpath d=%27M6 4a16 16 0 0 1 0 24M26 4a16 16 0 0 0 0 24%27 fill=%27none%27 stroke=%27%230b1411%27 stroke-width=%272.4%27/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <div class="glow" aria-hidden="true"></div>
   <header class="masthead">
-    <a class="wordmark" href="./" aria-label="Six-Love, back to start">Six<span>-</span>Love</a>
+    <a class="wordmark" href="./" aria-label="Six-Love, back to start"><span class="wordmark-ball"></span>Six-Love</a>
     <div class="masthead-status" id="status"></div>
   </header>
 
@@ -34,6 +36,8 @@
 
     <aside class="poster" id="poster" aria-label="Your lineup"></aside>
   </main>
+
+  <div class="sheet" id="sheet" hidden></div>
 
   <footer class="colophon">Ratings are one editor's opinion, relative to each tour. Eras are where a player peaked.</footer>
 

@@ -9,22 +9,37 @@ const OFFSET = Number(process.argv[3] || 0);
 const toP = (r) => { const [era, name, cc, years, style, slams, college, serve, rtn, rally, net, clutch, dbl, hard, clay, grass] = r; return { era, name, serve, rtn, rally, net, clutch, dbl, hard, clay, grass }; };
 const logistic = (d) => 1 / (1 + Math.exp(-d / WIDTH));
 
+function bestPairs(roster, count) {
+  // Brute force the best disjoint pairs from a small roster.
+  let best = null, bestSum = -Infinity;
+  const rec = (left, chosen, sum) => {
+    if (chosen.length === count) { if (sum > bestSum) { bestSum = sum; best = chosen; } return; }
+    for (let i = 0; i < left.length; i++) for (let j = i + 1; j < left.length; j++) {
+      rec(left.filter((_, k) => k !== i && k !== j), [...chosen, [left[i], left[j]]], sum + pairRating(left[i], left[j]));
+    }
+  };
+  rec(roster, [], 0);
+  return best.sort((a, b) => pairRating(...b) - pairRating(...a));
+}
 function draftDual(players, strategy) {
   const byEra = Object.groupBy(players, (p) => p.era);
   const eras = Object.keys(byEra);
   const picks = [];
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 8; i++) {
     const pool = byEra[eras[Math.floor(Math.random() * eras.length)]].filter((p) => !picks.includes(p));
-    const ranked = [...pool].sort((a, b) => singlesRating(b, "hard") - singlesRating(a, "hard"));
+    const key = i >= 6 ? (p) => p.dbl : (p) => singlesRating(p, "hard");
+    const ranked = [...pool].sort((a, b) => key(b) - key(a));
     picks.push(strategy === "best" ? ranked[0] : strategy === "median" ? ranked[Math.floor(ranked.length / 2)] : pool[Math.floor(Math.random() * pool.length)]);
   }
-  return picks.sort((a, b) => singlesRating(b, "hard") - singlesRating(a, "hard"));
+  const ladder = picks.slice(0, 6).sort((a, b) => singlesRating(b, "hard") - singlesRating(a, "hard"));
+  return { ladder, pairs: bestPairs(picks, 3) };
 }
-function playSeason(lineup) {
+function playSeason({ ladder, pairs }) {
   let wins = 0;
   for (const [, , D0] of SEASON) { const D = D0 + OFFSET;
     let pts = 0, dbl = 0;
-    for (let i = 0; i < 3; i++) if (Math.random() < logistic(pairRating(lineup[2 * i], lineup[2 * i + 1]) - (D + DUAL_DOUBLES[i]))) dbl++;
+    for (let i = 0; i < 3; i++) if (Math.random() < logistic(pairRating(...pairs[i]) - (D + DUAL_DOUBLES[i]))) dbl++;
+    const lineup = ladder;
     if (dbl >= 2) pts++;
     lineup.forEach((p, k) => { if (Math.random() < logistic(singlesRating(p, "hard") - (D + DUAL_LADDER[k]))) pts++; });
     if (pts >= 4) wins++;
@@ -41,7 +56,7 @@ function draftCup(players, strategy, surface) {
     picks.push(strategy === "best" ? ranked[0] : strategy === "median" ? ranked[Math.floor(ranked.length / 2)] : pool[Math.floor(Math.random() * pool.length)]);
   }
   picks.sort((a, b) => singlesRating(b, surface) - singlesRating(a, surface));
-  return { s1: picks[0], s2: picks[1], d: [picks[2], picks[3]] };
+  return { s1: picks[0], s2: picks[1], d: bestPairs(picks, 1)[0] };
 }
 function playCup(team, home) {
   let wins = 0;

@@ -45,32 +45,37 @@ const pairRating = (a, b) => 0.75 * (a.dbl + b.dbl) / 2 + 0.25 * (a.net + b.net)
 const STACK_TOLERANCE = 4;
 
 // A dual match: three doubles lines for one point, then six singles. First to four.
-const DUAL_SLOTS = [1, 2, 3, 4, 5, 6].map((n) => ({ id: `s${n}`, name: `No. ${n} singles`, line: n }));
-const DUAL_PAIRS = [["s1", "s2"], ["s3", "s4"], ["s5", "s6"]];
+// The roster is six singles spots plus two doubles-squad spots; doubles pairs are set from the whole roster.
+const DUAL_SLOTS = [
+  ...[1, 2, 3, 4, 5, 6].map((n) => ({ id: `s${n}`, name: `No. ${n} singles`, short: `No. ${n}`, line: n, singles: true })),
+  { id: "d7", name: "Doubles squad", short: "Squad", squad: true }, { id: "d8", name: "Doubles squad", short: "Squad", squad: true },
+];
+const DUAL_PAIR_COUNT = 3;
 const DUAL_LADDER = [5, 3, 1, -1, -3, -5];   // opponent strength by singles line, relative to the dual's rating
 const DUAL_DOUBLES = [2, 0, -2];               // and by doubles line
 
 // Twelve duals, from a soft opener to the NCAA final.
 const SEASON = [
-  ["Ohio State", "Season opener, Columbus", 71], ["Michigan", "Ann Arbor", 73],
-  ["Baylor", "ITA Indoor, Chicago", 75], ["Tennessee", "Knoxville", 77],
-  ["Florida", "Gainesville", 79], ["Georgia", "Athens", 81],
-  ["Texas", "Austin", 82], ["Wake Forest", "Conference final", 84],
-  ["Virginia", "NCAA round of 16", 85], ["TCU", "NCAA quarterfinal", 87],
-  ["Stanford", "NCAA semifinal", 89], ["USC", "NCAA final", 91],
+  ["Ohio State", "Season opener, Columbus", 72], ["Michigan", "Ann Arbor", 74],
+  ["Baylor", "ITA Indoor, Chicago", 76], ["Tennessee", "Knoxville", 78],
+  ["Florida", "Gainesville", 80], ["Georgia", "Athens", 82],
+  ["Texas", "Austin", 83], ["Wake Forest", "Conference final", 85],
+  ["Virginia", "NCAA round of 16", 86], ["TCU", "NCAA quarterfinal", 88],
+  ["Stanford", "NCAA semifinal", 90], ["USC", "NCAA final", 92],
 ];
 
-// A cup tie: two singles players and a doubles pair. Five rubbers, first to three.
+// A cup tie: two singles players and a doubles pair nominated from a squad of four. Five rubbers, first to three.
 const CUP_SLOTS = [
-  { id: "s1", name: "No. 1 singles", line: 1 }, { id: "s2", name: "No. 2 singles", line: 2 },
-  { id: "d1", name: "Doubles", line: 0 }, { id: "d2", name: "Doubles partner", line: 0 },
+  { id: "s1", name: "No. 1 singles", short: "No. 1", line: 1, singles: true }, { id: "s2", name: "No. 2 singles", short: "No. 2", line: 2, singles: true },
+  { id: "q3", name: "Squad", short: "Squad", squad: true }, { id: "q4", name: "Squad", short: "Squad", squad: true },
 ];
+const CUP_PAIR_COUNT = 1;
 // Seven ties. Surface null means your home surface.
 const CUP_RUN = [
-  ["Canada", "Qualifier, at home", null, 76], ["Australia", "Group stage, at home", null, 79],
-  ["Argentina", "Group stage, Buenos Aires", "clay", 82], ["Great Britain", "Group stage, Eastbourne", "grass", 84],
-  ["France", "Quarterfinal, at home", null, 86], ["Spain", "Semifinal, Madrid", "clay", 89],
-  ["Italy", "Final, Bologna", "hard", 92],
+  ["Canada", "Qualifier, at home", null, 77], ["Australia", "Group stage, at home", null, 80],
+  ["Argentina", "Group stage, Buenos Aires", "clay", 83], ["Great Britain", "Group stage, Eastbourne", "grass", 85],
+  ["France", "Quarterfinal, at home", null, 87], ["Spain", "Semifinal, Madrid", "clay", 90],
+  ["Italy", "Final, Bologna", "hard", 93],
 ];
 const CUP_LADDER = { 1: 3, 2: -3, 0: 0 };  // their No. 1, No. 2 and doubles pair, relative to the tie's rating
 // The five rubbers in order: [my slot, their line]. Play stops once a side has three.
@@ -83,11 +88,12 @@ const BUILDS = {
   dual: {
     name: "A college team",
     headline: "Draft six pros. Win the national title.",
-    lede: "The draw lands on an era. Take one player from it and give them a spot on your ladder, No. 1 to No. 6. Adjacent spots pair up for doubles. Then play a twelve-dual season and try to go 12-0.",
+    lede: "The draw lands on an era. Take one player from it and give them a spot: six on the singles ladder, two on the doubles squad. Then set three doubles pairs from anyone on the roster and play a twelve-dual season. Try to go 12-0.",
     rule: "The ladder has to run in order of ability. Put a clearly better player below a weaker one and the NCAA calls it stacking: that line is defaulted every match.",
-    posterTitle: "Lineup card", footEmpty: "Six spots. No. 1 faces their best player, No. 6 their weakest.",
+    posterTitle: "Lineup card", footEmpty: "Eight spots. No. 1 faces their best player, No. 6 their weakest. Squad players only play doubles.",
+    doublesTitle: "Set your doubles", doublesLede: "Pair up three teams from the roster, best pair first. Anyone can play doubles, including your singles players; two will sit out.",
     place: "a spot on the ladder", crateLede: "Choose one player from this pool.",
-    fullTitle: "The lineup is set", fullLede: "Twelve duals: doubles point first, then six singles, first to four. The opponents get tougher all the way to the NCAA final.",
+    fullTitle: "The lineup card is in", fullLede: "Twelve duals: doubles point first, then six singles, first to four. The opponents get tougher all the way to the NCAA final.",
     start: "Play the season", running: "in season", stage: "Dual", win: "W", loss: "L", surfaceNote: "Every dual is on hard courts.",
     verdicts: ["12-0. A perfect season and a national title.", "One or two slipped away, but the banner goes up.",
       "A tournament team. Not a champion.", "A .500 season. The athletic director is patient, for now.", "Rebuilding year."],
@@ -95,9 +101,10 @@ const BUILDS = {
   cup: {
     name: "A nation cup team",
     headline: "Draft four pros. Bring the cup home.",
-    lede: "Two singles players and a doubles pair. Ties are played on whatever the host lays down, so pick your home surface and draft for it. Seven ties from the qualifier to the final.",
+    lede: "A squad of four: two singles players and two more. Then nominate a doubles pair from anyone on the squad. Ties are played on whatever the host lays down, so pick your home surface and draft for it.",
     rule: "Each tie is five rubbers, first to three: singles day one, doubles day two, reverse singles day three. Away ties are on the hosts' surface.",
-    posterTitle: "Tie nomination", footEmpty: "Two singles spots and a doubles pair.",
+    posterTitle: "Tie nomination", footEmpty: "Two singles spots and two squad places. The doubles pair comes from any of the four.",
+    doublesTitle: "Nominate the doubles", doublesLede: "Pick two from the squad. A singles player can double up, but it is one pair for the whole run.",
     place: "a place on the team", crateLede: "Choose one player from this pool.",
     fullTitle: "The team is nominated", fullLede: "Seven ties. Home ties are on your surface; away ties are on theirs.",
     start: "Play the ties", running: "in the cup", stage: "Tie", win: "W", loss: "L", surfaceNote: "",
