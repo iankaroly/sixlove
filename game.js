@@ -6,7 +6,7 @@
   const MODES = {
     classic: { name: "Classic", blurb: "Ratings on show while you draft.", respins: 2, showRatings: true },
     scout: { name: "Scout", blurb: "Names only. You have to know your tennis.", respins: 2, showRatings: false },
-    daily: { name: "Daily", blurb: "Same draws for everyone. One shot, no redraws.", respins: 0, showRatings: false },
+    daily: { name: "Daily", blurb: "Same rolls for everyone. One shot, no re-rolls.", respins: 0, showRatings: false },
   };
 
   // ---------- players and pools ----------
@@ -16,8 +16,7 @@
   function poolsFor(tour) {
     const players = TOURS[tour].players().map(toPlayer);
     const eras = ERAS.map(([key, era, scenes]) => ({ id: `${tour}-${key}`, era, scene: scenes[tour], items: players.filter((p) => p.era === key) }));
-    const wild = WILD_POOLS.map((w) => ({ id: `${tour}-${w.id}`, era: "Any era", scene: w.scene, wild: true, items: players.filter(w.test) }));
-    return { eras, wild };
+    return { eras, wild: [] };
   }
 
   function buildFormat({ kind, tour, surface }) {
@@ -43,7 +42,7 @@
   let format = buildFormat(choice);
 
   // ---------- rooms: play with friends ----------
-  // A room fixes the settings and the seed, so everyone gets the same draws. Results land on a shared scoreboard.
+  // A room fixes the settings and the seed, so everyone gets the same rolls. Results land on a shared scoreboard.
   let room = null;          // { code, settings, seed, host, players: [{ id, name, result }] }
   let me = null;            // { id, name } for this browser in the current room
   let roomError = "";
@@ -136,6 +135,7 @@
   const r1 = (n) => Math.round(n);
   const lineName = (p) => p.name.split(" ").slice(-1)[0];
   const pairName = (a, b) => `${lineName(a)} / ${lineName(b)}`;
+  const article = (word) => (/^[aeiou]/i.test(word) ? "an" : "a");
 
   function hash(str) {
     let h = 1779033703 ^ str.length;
@@ -153,7 +153,9 @@
   function readDaily() { try { return JSON.parse(localStorage.getItem(dailyKey())); } catch { return null; } }
   function saveDaily(result) { try { localStorage.setItem(dailyKey(), JSON.stringify(result)); } catch { /* private window */ } }
 
-  const ratingsVisible = () => Boolean(MODES[state.mode]?.showRatings) || state.phase === "season" || state.phase === "done";
+  // Bars show in Classic while drafting; the true line ratings only come out once the season is played.
+  const ratingsVisible = () => state.phase === "season" || state.phase === "done";
+  const stackingVisible = () => Boolean(MODES[state.mode]?.showRatings) || ratingsVisible();
   const singles = (p, surface = format.surface) => singlesRating(p, surface);
   const singlesSlots = () => format.slots.filter((s) => s.singles);
   const roster = () => format.slots.map((s) => state.lineup[s.id]).filter(Boolean);
@@ -200,13 +202,10 @@
   function spin(isRespin) {
     if (state.phase === "spinning") return;
     if (isRespin) state.respins--;
-    const open = (pools, min) => pools.filter((p) => p.id !== state.lastPoolId && availableItems(p).length >= min);
-    const wild = open(format.wild, 4);
-    const goWild = state.rng() < 0.3 && wild.length > 0;
-    const options = goWild ? wild : open(format.pools, 3);
+    // One era per roll, never the same era twice running. Everyone from that era is in the pool, legends included.
+    const options = format.pools.filter((p) => p.id !== state.lastPoolId && availableItems(p).length >= 3);
     const pool = options[Math.floor(state.rng() * options.length)];
-    let crate = availableItems(pool);
-    if (pool.wild) crate = crate.map((p) => [state.rng(), p]).sort((a, b) => a[0] - b[0]).slice(0, 9).map(([, p]) => p);
+    const crate = availableItems(pool);
     state.phase = "spinning";
     state.selected = null;
     render();
@@ -223,7 +222,7 @@
     };
     if (reducedMotion) { land(); return; }
     el.ball.classList.add("is-spinning");
-    const reel = [...format.pools, ...format.wild];
+    const reel = format.pools;
     const flicker = setInterval(() => { const p = reel[Math.floor(Math.random() * reel.length)]; setLabel(p.era, p.scene); }, 90);
     setTimeout(land, 1400);
   }
@@ -274,12 +273,14 @@
     const doublesPoint = doublesWon >= 2;
     lines.push({ label: "Doubles point", who: `${doublesWon} of 3 pairs won`, won: doublesPoint, point: true, doubles: true });
     let points = doublesPoint ? 1 : 0;
+    const finale = stage.index >= format.stages.length - 3;
     singlesSlots().forEach((slot, k) => {
-      const p = L[slot.id], mine = singles(p, "hard"), theirs = stage.diff + DUAL_LADDER[k];
+      const p = L[slot.id], opp = opponentStyle(stage.title, k + 1);
+      const mine = singles(p, "hard") + matchup(p, opp) + (finale ? finaleBonus(p) : 0), theirs = stage.diff + DUAL_LADDER[k];
       const isStacked = stacked.has(slot.id);
       const won = !isStacked && state.rng() < winChance(mine, theirs);
       if (won) points++;
-      lines.push({ label: `No. ${k + 1}`, who: lineName(p), won, stacked: isStacked, point: true });
+      lines.push({ label: `No. ${k + 1}`, who: `${lineName(p)} v ${article(FAMILY_NAMES[opp])} ${FAMILY_NAMES[opp]}`, won, stacked: isStacked, point: true });
     });
     return { ...stage, lines, score: `${points}-${7 - points}`, won: points >= 4 };
   }
@@ -287,20 +288,22 @@
   function playTie(stage) {
     const L = state.lineup, [a, b] = pairPlayers(state.pairs[0]), lines = [];
     let mine = 0, theirs = 0;
+    const finale = stage.index >= format.stages.length - 3;
     for (const [slot, line] of CUP_RUBBERS) {
       const decided = mine === 3 || theirs === 3;
       const isDoubles = slot === "d";
-      const rating = isDoubles ? pairRating(a, b) : singles(L[slot], stage.surface);
+      const opp = isDoubles ? null : opponentStyle(stage.title, line);
+      const rating = isDoubles ? pairRating(a, b) : singles(L[slot], stage.surface) + matchup(L[slot], opp) + (finale ? finaleBonus(L[slot]) : 0);
       const won = decided ? null : state.rng() < winChance(rating, stage.diff + CUP_LADDER[line]);
       if (won === true) mine++; else if (won === false) theirs++;
-      lines.push({ label: isDoubles ? "Doubles" : `${lineName(L[slot])} v their No. ${line}`, who: isDoubles ? pairName(a, b) : "", won, point: true, doubles: isDoubles });
+      lines.push({ label: isDoubles ? "Doubles" : `${lineName(L[slot])} v their No. ${line}, ${article(FAMILY_NAMES[opp])} ${FAMILY_NAMES[opp]}`, who: isDoubles ? pairName(a, b) : "", won, point: true, doubles: isDoubles });
     }
     return { ...stage, lines, score: `${mine}-${theirs}`, won: mine === 3 };
   }
 
   function playSeason() {
     if (!pairsDone()) return;
-    state.results = format.stages.map((stage) => (format.kind === "dual" ? playDual(stage) : playTie(stage)));
+    state.results = format.stages.map((stage, index) => (format.kind === "dual" ? playDual({ ...stage, index }) : playTie({ ...stage, index })));
     state.shown = 0;
     state.phase = "season";
     render();
@@ -376,6 +379,7 @@
         <h1>${copy.headline}</h1>
         <p class="lede">${copy.lede}</p>
         <p class="rule">${copy.rule}</p>
+        <p class="rule">${copy.knowledge}</p>
         <div class="choosers">
           <div><h2 class="chooser-title">Build</h2>${chips("kind", Object.entries(BUILDS).map(([id, b]) => [id, b.name]), choice.kind)}</div>
           <div><h2 class="chooser-title">Tour</h2>${chips("tour", Object.entries(TOURS).map(([id, t]) => [id, t.name]), choice.tour)}</div>
@@ -386,13 +390,13 @@
             const done = id === "daily" && played;
             return `<button class="mode" data-mode="${id}" ${done ? "disabled" : ""}>
               <span class="mode-name">${done ? `Daily played · ${played.wins}-${played.total - played.wins}` : m.name}</span>
-              <span class="mode-blurb">${done ? "New draws arrive at midnight." : m.blurb}</span>
+              <span class="mode-blurb">${done ? "New rolls arrive at midnight." : m.blurb}</span>
             </button>`;
           }).join("")}
         </div>
         <section class="friends">
           <h2 class="friends-title">Play with friends</h2>
-          <p class="friends-blurb">Everyone in a room gets the same draws with the build and tour picked above. Share the link, play whenever, and the scoreboard ranks the room.</p>
+          <p class="friends-blurb">Everyone in a room gets the same rolls with the build and tour picked above. Share the link, play whenever, and the scoreboard ranks the room.</p>
           <div class="friends-row">
             <div class="seg friends-mode">${["classic", "scout"].map((m) => `<button class="seg-btn" data-choose="roomMode" data-value="${m}" aria-pressed="${(choice.roomMode || "classic") === m}">${MODES[m].name}</button>`).join("")}</div>
             <form class="friends-form" data-form="create"><input class="input" name="name" placeholder="Your name" maxlength="24" required autocomplete="nickname"><button class="primary" type="submit" ${roomBusy ? "disabled" : ""}>Create a room</button></form>
@@ -410,7 +414,7 @@
       el.console.innerHTML = `
         <p class="eyebrow">${esc(room.host)}'s room · ${esc(summary)}</p>
         <h2>${!me ? `Join ${esc(room.host)}'s room` : mine?.result ? "Scoreboard" : "You're in"}</h2>
-        ${!me ? `<p class="lede">Enter a name and you'll get the same draws as everyone else. ${room.players.length} in so far.</p>
+        ${!me ? `<p class="lede">Enter a name and you'll get the same rolls as everyone else. ${room.players.length} in so far.</p>
           <form class="friends-form" data-form="join"><input class="input" name="name" placeholder="Your name" maxlength="24" required autocomplete="nickname"><button class="primary" type="submit" ${roomBusy ? "disabled" : ""}>Join and play</button></form>`
         : mine?.result ? `<p class="lede">${finished} of ${room.players.length} finished. This page updates on its own.</p>`
         : `<p class="lede">Play when you're ready. Your result posts to the room when the season ends.</p>
@@ -422,9 +426,9 @@
     if (p === "spin" || p === "spinning") {
       el.console.innerHTML = `
         <p class="eyebrow">${state.round === 0 ? "First pick" : `Pick ${state.round + 1} of ${format.slots.length}`}</p>
-        <h2>${p === "spinning" ? "Making the draw…" : "Where's the next pick coming from?"}</h2>
-        <p class="lede">${p === "spinning" ? "The ball's in the air." : "The draw lands on an era, or a wild pool that cuts across all of them."}</p>
-        <button class="primary" data-action="spin" ${p === "spinning" ? "disabled" : ""}>Make the draw</button>`;
+        <h2>${p === "spinning" ? "Rolling…" : "Roll for an era"}</h2>
+        <p class="lede">${p === "spinning" ? "The ball's in the air." : "Every roll lands on one era. Everyone in that pool played in it, legends included."}</p>
+        <button class="primary" data-action="spin" ${p === "spinning" ? "disabled" : ""}>Roll</button>`;
       return;
     }
     if (p === "pick") {
@@ -434,7 +438,7 @@
         <h2>${esc(state.pool.scene)}</h2>
         <p class="lede">${state.selected ? `Choose ${copy.place} for ${esc(state.selected.name)}.` : copy.crateLede}</p>
         ${MODES[state.mode].respins ? `<button class="secondary" data-action="respin" ${canRespin ? "" : "disabled"}>
-          ${canRespin ? `Redraw · ${state.respins} left` : "No redraws left"}</button>` : ""}`;
+          ${canRespin ? `Re-roll · ${state.respins} left` : "No re-rolls left"}</button>` : ""}`;
       return;
     }
     if (p === "doubles") {
@@ -444,7 +448,7 @@
         <p class="eyebrow">Roster complete</p>
         <h2>${copy.doublesTitle}</h2>
         <p class="lede">${copy.doublesLede}</p>
-        ${stacked.size && ratingsVisible() ? `<p class="warn">Stacked ladder: ${[...stacked].map((id) => slotOf(id).name).join(", ")} will be defaulted.</p>` : ""}
+        ${stacked.size && stackingVisible() ? `<p class="warn">Stacked ladder: ${[...stacked].map((id) => slotOf(id).name).join(", ")} will be defaulted.</p>` : ""}
         <p class="hint">${need ? (state.pairDraft ? "Now tap a partner." : `Tap two players to form ${need === format.pairCount ? "a pair" : "the next pair"}. ${need} to go.`) : "All pairs set."}</p>
         <button class="primary" data-action="season" ${pairsDone() ? "" : "disabled"}>${copy.start}</button>`;
       return;
@@ -479,10 +483,10 @@
     const bits = [a.style, a.slams === 0 ? "no slams" : a.slams === 1 ? "1 slam" : `${a.slams} slams`, a.college];
     return bits.filter(Boolean).join(" · ");
   }
-  const ratingsBlock = (a) => `<span class="act-ratings">${RATING_KEYS.map(([k, label]) =>
-    `<span class="stat"><span class="stat-label">${label}</span><span class="stat-value">${a[k]}</span><span class="stat-bar" style="--v:${a[k]}"></span></span>`).join("")}</span>
-    <span class="act-singles">${Object.entries(SURFACES).map(([k, label]) =>
-      `<span class="${k === format.surface ? "is-surface" : ""}">${label} <b>${r1(singles(a, k))}</b></span>`).join("")}</span>`;
+  // Classic shows the five skill bars. Nerve, pedigree, surfaces and matchups stay in your head.
+  const SHOWN_KEYS = RATING_KEYS.filter(([k]) => k !== "clutch");
+  const ratingsBlock = (a) => `<span class="act-ratings">${SHOWN_KEYS.map(([k, label]) =>
+    `<span class="stat"><span class="stat-label">${label}</span><span class="stat-value">${a[k]}</span><span class="stat-bar" style="--v:${a[k]}"></span></span>`).join("")}</span>`;
 
   function renderCrate() {
     const p = state.phase;
@@ -498,7 +502,7 @@
       return;
     }
     if (p === "doubles") {
-      const show = ratingsVisible();
+      const show = Boolean(MODES[state.mode].showRatings);
       const players = roster();
       el.crate.innerHTML = `
         <ol class="pairs-set">${Array.from({ length: format.pairCount }, (_, i) => {
@@ -507,7 +511,7 @@
           const [a, b] = pairPlayers(pr);
           return `<li class="pairslot"><span class="pairslot-no">${format.kind === "dual" ? `Doubles ${i + 1}` : "Doubles"}</span>
             <span class="pairslot-names">${flag(a.cc)} ${esc(lineName(a))} / ${flag(b.cc)} ${esc(lineName(b))}</span>
-            ${show ? `<span class="pairslot-score">${r1(pairRating(a, b))}</span>` : ""}
+            ${isRealPair(a, b) ? `<span class="pairslot-score">real pair</span>` : ""}
             <button class="pairslot-x" data-unpair="${i}" aria-label="Remove pair">×</button></li>`;
         }).join("")}</ol>
         <ul class="acts is-roster">${players.map((a) => {
@@ -541,13 +545,13 @@
     const p = state.lineup?.[s.id];
     const visible = ratingsVisible();
     if (p) {
-      const isStacked = visible && stackedLines(state.lineup).has(s.id);
+      const isStacked = stackingVisible() && stackedLines(state.lineup).has(s.id);
       return `<li class="spot is-filled ${isStacked ? "is-stacked" : ""}"><span class="spot-name">${s.short}</span>
         <span class="spot-player">${flag(p.cc)} ${esc(p.name)}</span>
         ${visible ? `<span class="spot-score">${isStacked ? "Stacked" : s.squad ? `<i>dbl</i> ${p.dbl}` : r1(singles(p))}</span>` : ""}</li>`;
     }
     if (interactive && state.phase === "pick" && state.selected) {
-      const bad = visible ? stackingIfPlaced(s.id) : [];
+      const bad = stackingVisible() ? stackingIfPlaced(s.id) : [];
       return `<li class="spot is-open"><button class="place ${bad.length ? "is-bad" : ""}" data-slot="${s.id}">
         <span class="spot-name">${s.short}</span><span class="spot-player">${esc(s.squad ? "Doubles only" : "Place here")}</span>
         ${bad.length ? `<span class="spot-score">Stacks ${bad.map((id) => slotOf(id).short).join(", ")}</span>` : ""}</button></li>`;
@@ -581,12 +585,12 @@
     const open = state.phase === "pick" && state.selected;
     el.sheet.hidden = !open;
     if (!open) { el.sheet.innerHTML = ""; return; }
-    const p = state.selected, visible = ratingsVisible();
+    const p = state.selected;
     el.sheet.innerHTML = `<div class="sheet-inner">
-      <div class="sheet-head"><span class="sheet-name">${flag(p.cc)} ${esc(p.name)}${visible ? ` <b>${r1(singles(p))}</b>` : ""}</span><button class="sheet-close" data-item="${esc(p.id)}" aria-label="Cancel">×</button></div>
+      <div class="sheet-head"><span class="sheet-name">${flag(p.cc)} ${esc(p.name)}</span><button class="sheet-close" data-item="${esc(p.id)}" aria-label="Cancel">×</button></div>
       <div class="sheet-slots">${format.slots.map((s) => {
         if (state.lineup[s.id]) return `<span class="sheet-slot is-filled"><span>${s.short}</span><small>${esc(lineName(state.lineup[s.id]))}</small></span>`;
-        const bad = visible ? stackingIfPlaced(s.id) : [];
+        const bad = stackingVisible() ? stackingIfPlaced(s.id) : [];
         return `<button class="sheet-slot ${bad.length ? "is-bad" : ""}" data-slot="${s.id}"><span>${s.short}</span><small>${bad.length ? "Stacks" : s.squad ? "Doubles" : "Open"}</small></button>`;
       }).join("")}</div></div>`;
   }

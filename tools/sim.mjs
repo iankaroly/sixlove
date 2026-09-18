@@ -2,11 +2,12 @@
 import fs from "node:fs";
 import vm from "node:vm";
 const src = ["players.js", "formats.js"].map((f) => fs.readFileSync(new URL(`../${f}`, import.meta.url), "utf8")).join("\n");
-const { ATP, WTA, singlesRating, pairRating, SEASON, DUAL_LADDER, DUAL_DOUBLES, CUP_RUN, CUP_LADDER, CUP_RUBBERS, ERAS, STACK_TOLERANCE } =
-  vm.runInNewContext(`${src}\n;({ ATP, WTA, singlesRating, pairRating, SEASON, DUAL_LADDER, DUAL_DOUBLES, CUP_RUN, CUP_LADDER, CUP_RUBBERS, ERAS, STACK_TOLERANCE })`);
+const { ATP, WTA, singlesRating, pairRating, SEASON, DUAL_LADDER, DUAL_DOUBLES, CUP_RUN, CUP_LADDER, CUP_RUBBERS, matchup, finaleBonus, FAMILIES } =
+  vm.runInNewContext(`${src}\n;({ ATP, WTA, singlesRating, pairRating, SEASON, DUAL_LADDER, DUAL_DOUBLES, CUP_RUN, CUP_LADDER, CUP_RUBBERS, matchup, finaleBonus, FAMILIES })`);
 const WIDTH = Number(process.argv[2] || 4);
 const OFFSET = Number(process.argv[3] || 0);
-const toP = (r) => { const [era, name, cc, years, style, slams, college, serve, rtn, rally, net, clutch, dbl, hard, clay, grass] = r; return { era, name, serve, rtn, rally, net, clutch, dbl, hard, clay, grass }; };
+const toP = (r) => { const [era, name, cc, years, style, slams, college, serve, rtn, rally, net, clutch, dbl, hard, clay, grass] = r; return { era, name, cc, style, slams, serve, rtn, rally, net, clutch, dbl, hard, clay, grass }; };
+const oppStyle = () => FAMILIES[Math.floor(Math.random() * FAMILIES.length)];
 const logistic = (d) => 1 / (1 + Math.exp(-d / WIDTH));
 
 function bestPairs(roster, count) {
@@ -36,14 +37,14 @@ function draftDual(players, strategy) {
 }
 function playSeason({ ladder, pairs }) {
   let wins = 0;
-  for (const [, , D0] of SEASON) { const D = D0 + OFFSET;
+  SEASON.forEach(([, , D0], si) => { const D = D0 + OFFSET, finale = si >= SEASON.length - 3;
     let pts = 0, dbl = 0;
     for (let i = 0; i < 3; i++) if (Math.random() < logistic(pairRating(...pairs[i]) - (D + DUAL_DOUBLES[i]))) dbl++;
     const lineup = ladder;
     if (dbl >= 2) pts++;
-    lineup.forEach((p, k) => { if (Math.random() < logistic(singlesRating(p, "hard") - (D + DUAL_LADDER[k]))) pts++; });
+    lineup.forEach((p, k) => { if (Math.random() < logistic(singlesRating(p, "hard") + matchup(p, oppStyle()) + (finale ? finaleBonus(p) : 0) - (D + DUAL_LADDER[k]))) pts++; });
     if (pts >= 4) wins++;
-  }
+  });
   return wins;
 }
 function draftCup(players, strategy, surface) {
@@ -60,16 +61,16 @@ function draftCup(players, strategy, surface) {
 }
 function playCup(team, home) {
   let wins = 0;
-  for (const [, , surf, D0] of CUP_RUN) {
-    const D = D0 + OFFSET, surface = surf || home;
+  CUP_RUN.forEach(([, , surf, D0], si) => {
+    const D = D0 + OFFSET, surface = surf || home, finale = si >= CUP_RUN.length - 3;
     let mine = 0, theirs = 0;
     for (const [slot, line] of CUP_RUBBERS) {
       if (mine === 3 || theirs === 3) break;
-      const r = slot === "d" ? pairRating(...team.d) : singlesRating(team[slot], surface);
+      const r = slot === "d" ? pairRating(...team.d) : singlesRating(team[slot], surface) + matchup(team[slot], oppStyle()) + (finale ? finaleBonus(team[slot]) : 0);
       if (Math.random() < logistic(r - (D + CUP_LADDER[line]))) mine++; else theirs++;
     }
     if (mine === 3) wins++;
-  }
+  });
   return wins;
 }
 for (const [tourName, tour] of [["ATP", ATP], ["WTA", WTA]]) {

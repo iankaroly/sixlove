@@ -1,4 +1,4 @@
-// What you can build, which pools the draw lands on, and how a season is scored.
+// What you can build, which era each roll lands on, and how a season is scored.
 
 const TOURS = {
   atp: { name: "ATP", short: "ATP", players: () => ATP },
@@ -6,7 +6,7 @@ const TOURS = {
   open: { name: "Open era mix", short: "Mixed", players: () => [...ATP, ...WTA] },
 };
 
-// Era pools. The scene line is what the draw board shows under the decade.
+// Era pools. The scene line is what the roll board shows under the decade.
 const ERAS = [
   ["70s", "1970s", { atp: "Wood and wool", wta: "Open era pioneers", open: "Wood and wool" }],
   ["80s", "1980s", { atp: "Graphite arrives", wta: "Graphite arrives", open: "Graphite arrives" }],
@@ -16,30 +16,77 @@ const ERAS = [
   ["20s", "2020s", { atp: "The next generation", wta: "The new guard", open: "The new guard" }],
 ];
 
-// Wild pools cut across every era. They are dealt nine players at a time.
-const WILD_POOLS = [
-  { id: "wild-doubles", scene: "Doubles specialists", test: (p) => p.dbl >= 94 },
-  { id: "wild-net", scene: "Net rushers", test: (p) => p.net >= 90 },
-  { id: "wild-serve", scene: "Big servers", test: (p) => p.serve >= 92 },
-  { id: "wild-return", scene: "Return artists", test: (p) => p.rtn >= 90 },
-  { id: "wild-clay", scene: "Clay specialists", test: (p) => p.clay >= p.hard + 4 },
-  { id: "wild-grass", scene: "Grass lovers", test: (p) => p.grass >= p.hard + 4 || p.grass >= 95 },
-  { id: "wild-legends", scene: "Ten or more slams", test: (p) => p.slams >= 10 },
-  { id: "wild-one", scene: "One-slam wonders", test: (p) => p.slams === 1 },
-  { id: "wild-none", scene: "Never won a slam", test: (p) => p.slams === 0 },
-  { id: "wild-college", scene: "College alumni", test: (p) => Boolean(p.college) },
-  { id: "wild-clutch", scene: "Ice in the veins", test: (p) => p.clutch >= 90 },
-];
-
 const RATING_KEYS = [
   ["serve", "Serve"], ["rtn", "Return"], ["rally", "Rally"], ["net", "Net"], ["clutch", "Clutch"], ["dbl", "Doubles"],
 ];
 const SURFACES = { hard: "Hard", clay: "Clay", grass: "Grass" };
 
-// A singles line is mostly skill, partly the surface underfoot. Doubles is its own craft.
+// ---------- how a player is really judged ----------
+// The bars show skills. What wins matches is skills plus the things a tennis fan knows: how a player
+// handles the big moments, what they have actually won, which surface suits them, and how their game
+// matches up against the opponent's. None of that is printed on the card.
+
+// Play styles, from the label on the card. Servers, volleyers, retrievers, power hitters, all-courters.
+const STYLE_FAMILY = {
+  "Big server": "server", "Kick serve": "server",
+  "Serve and volley": "volleyer", "Net rusher": "volleyer", "Doubles specialist": "volleyer",
+  "Counterpuncher": "retriever", "Return king": "retriever", "Return queen": "retriever", "Grinder": "retriever",
+  "Moonballer": "retriever", "Giant killer": "retriever", "Baseline machine": "retriever", "Clay grinder": "retriever",
+  "Clay artist": "retriever", "Clay king": "retriever", "Clay queen": "retriever", "The Mosquito": "retriever",
+  "Power baseline": "power", "Power": "power", "Flat hitter": "power", "Big hitter": "power", "Two-fisted power": "power",
+  "Two-fisted": "power", "Forehand": "power", "One-handed power": "power", "Lefty power": "power",
+};
+const family = (p) => STYLE_FAMILY[p.style] || "allcourt";
+const FAMILY_NAMES = { server: "big server", volleyer: "volleyer", retriever: "retriever", power: "power hitter", allcourt: "all-courter" };
+
+// Matchups, in rating points for the first style against the second.
+const MATCHUP = {
+  server: { retriever: -2.5, volleyer: 1, power: 0.5, allcourt: 0, server: 0 },
+  volleyer: { power: -2, retriever: 1.5, server: 0, allcourt: 0, volleyer: 0 },
+  retriever: { power: 2, volleyer: -1.5, server: 1.5, allcourt: 0, retriever: 0 },
+  power: { volleyer: 2, retriever: -2, server: 0, allcourt: 0, power: 0 },
+  allcourt: { server: 0.5, volleyer: 0.5, retriever: 0.5, power: 0.5, allcourt: 0 },
+};
+// Surfaces, in rating points: volleyers and servers love grass and hate clay, retrievers the reverse.
+const SURFACE_FIT = {
+  server: { hard: 0.5, clay: -2, grass: 2 }, volleyer: { hard: 0, clay: -2.5, grass: 2.5 },
+  retriever: { hard: 0, clay: 2, grass: -1.5 }, power: { hard: 0.5, clay: -0.5, grass: 0 }, allcourt: { hard: 0.5, clay: 0, grass: 0.5 },
+};
+const matchup = (a, b) => MATCHUP[family(a)][b] || 0;
+
+// What a player has actually won. Zero slams is 60, ten is 92, twenty-plus tops out.
+const pedigree = (p) => Math.min(99, 60 + p.slams * 3.2);
+const skill = (p) => 0.24 * p.serve + 0.2 * p.rtn + 0.32 * p.rally + 0.12 * p.net + 0.12 * p.clutch;
 const singlesRating = (p, surface) =>
-  0.68 * (0.22 * p.serve + 0.2 * p.rtn + 0.3 * p.rally + 0.1 * p.net + 0.18 * p.clutch) + 0.32 * p[surface];
-const pairRating = (a, b) => 0.75 * (a.dbl + b.dbl) / 2 + 0.25 * (a.net + b.net) / 2;
+  0.5 * skill(p) + 0.25 * p[surface] + 0.25 * (0.55 * p.clutch + 0.45 * pedigree(p)) + SURFACE_FIT[family(p)][surface];
+// In the last three matches of a run, nerves count double.
+const finaleBonus = (p) => (p.clutch - 82) * 0.12;
+
+// Doubles is its own craft, and chemistry is real: two net players click, two grinders get passed,
+// and pairs that actually played together get a bonus. Compatriots get a little too.
+const REAL_PAIRS = [
+  ["Bob Bryan", "Mike Bryan"], ["Martina Navratilova", "Pam Shriver"], ["Billie Jean King", "Rosie Casals"],
+  ["Gigi Fernández", "Natasha Zvereva"], ["Sara Errani", "Roberta Vinci"], ["Barbora Krejčíková", "Kateřina Siniaková"],
+  ["Martina Hingis", "Jana Novotná"], ["Helena Suková", "Jana Novotná"], ["Lisa Raymond", "Sam Stosur"],
+  ["Stefan Edberg", "Anders Järryd"], ["Jack Sock", "John Isner"], ["Rafael Nadal", "Carlos Alcaraz"],
+  ["Roger Federer", "Stan Wawrinka"], ["Serena Williams", "Venus Williams"], ["Steffi Graf", "Gabriela Sabatini"],
+  ["Arantxa Sánchez Vicario", "Jana Novotná"], ["Lindsay Davenport", "Natasha Zvereva"], ["Rod Laver", "Ken Rosewall"],
+  ["John Newcombe", "Rod Laver"], ["Margaret Court", "Evonne Goolagong"], ["Andy Murray", "Jamie Murray"],
+  ["Coco Gauff", "Jessica Pegula"], ["Ashleigh Barty", "Coco Gauff"], ["Kim Clijsters", "Justine Henin"],
+];
+const isRealPair = (a, b) => REAL_PAIRS.some(([x, y]) => (x === a.name && y === b.name) || (x === b.name && y === a.name));
+function chemistry(a, b) {
+  const fa = family(a), fb = family(b);
+  let c = 0;
+  if (fa === "volleyer" && fb === "volleyer") c += 3;
+  else if (fa === "volleyer" || fb === "volleyer") c += 1;
+  if (fa === "retriever" && fb === "retriever") c -= 2.5;
+  if (fa === "power" && fb === "power") c -= 1;
+  if (a.cc === b.cc) c += 1;
+  if (isRealPair(a, b)) c += 4;
+  return c;
+}
+const pairRating = (a, b) => 0.5 * (a.dbl + b.dbl) / 2 + 0.2 * (a.net + b.net) / 2 + 0.15 * (a.serve + b.serve) / 2 + 0.15 * (a.rtn + b.rtn) / 2 + chemistry(a, b);
 
 // NCAA rule: the ladder must run in order of ability. A spot may be this much stronger than the spot above it.
 const STACK_TOLERANCE = 4;
@@ -56,12 +103,12 @@ const DUAL_DOUBLES = [2, 0, -2];               // and by doubles line
 
 // Twelve duals, from a soft opener to the NCAA final.
 const SEASON = [
-  ["Ohio State", "Season opener, Columbus", 72], ["Michigan", "Ann Arbor", 74],
-  ["Baylor", "ITA Indoor, Chicago", 76], ["Tennessee", "Knoxville", 78],
-  ["Florida", "Gainesville", 80], ["Georgia", "Athens", 82],
-  ["Texas", "Austin", 83], ["Wake Forest", "Conference final", 85],
-  ["Virginia", "NCAA round of 16", 86], ["TCU", "NCAA quarterfinal", 88],
-  ["Stanford", "NCAA semifinal", 90], ["USC", "NCAA final", 92],
+  ["Ohio State", "Season opener, Columbus", 73], ["Michigan", "Ann Arbor", 75],
+  ["Baylor", "ITA Indoor, Chicago", 77], ["Tennessee", "Knoxville", 79],
+  ["Florida", "Gainesville", 81], ["Georgia", "Athens", 83],
+  ["Texas", "Austin", 84], ["Wake Forest", "Conference final", 86],
+  ["Virginia", "NCAA round of 16", 87], ["TCU", "NCAA quarterfinal", 89],
+  ["Stanford", "NCAA semifinal", 91], ["USC", "NCAA final", 93],
 ];
 
 // A cup tie: two singles players and a doubles pair nominated from a squad of four. Five rubbers, first to three.
@@ -72,14 +119,21 @@ const CUP_SLOTS = [
 const CUP_PAIR_COUNT = 1;
 // Seven ties. Surface null means your home surface.
 const CUP_RUN = [
-  ["Canada", "Qualifier, at home", null, 77], ["Australia", "Group stage, at home", null, 80],
-  ["Argentina", "Group stage, Buenos Aires", "clay", 83], ["Great Britain", "Group stage, Eastbourne", "grass", 85],
-  ["France", "Quarterfinal, at home", null, 87], ["Spain", "Semifinal, Madrid", "clay", 90],
-  ["Italy", "Final, Bologna", "hard", 93],
+  ["Canada", "Qualifier, at home", null, 78], ["Australia", "Group stage, at home", null, 81],
+  ["Argentina", "Group stage, Buenos Aires", "clay", 84], ["Great Britain", "Group stage, Eastbourne", "grass", 86],
+  ["France", "Quarterfinal, at home", null, 88], ["Spain", "Semifinal, Madrid", "clay", 91],
+  ["Italy", "Final, Bologna", "hard", 94],
 ];
 const CUP_LADDER = { 1: 3, 2: -3, 0: 0 };  // their No. 1, No. 2 and doubles pair, relative to the tie's rating
 // The five rubbers in order: [my slot, their line]. Play stops once a side has three.
 const CUP_RUBBERS = [["s1", 2], ["s2", 1], ["d", 0], ["s1", 1], ["s2", 2]];
+// Opposing teams have styles too, dealt from the stage name so they're the same for everyone in a room.
+const FAMILIES = ["server", "volleyer", "retriever", "power", "allcourt"];
+function opponentStyle(stageTitle, line) {
+  let h = 2166136261;
+  for (const ch of `${stageTitle}#${line}`) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); }
+  return FAMILIES[(h >>> 0) % FAMILIES.length];
+}
 // Every match is decided by a logistic on the rating gap. Four points of gap is about 73-27.
 const MATCH_WIDTH = 4;
 const winChance = (mine, theirs) => 1 / (1 + Math.exp(-(mine - theirs) / MATCH_WIDTH));
@@ -88,8 +142,9 @@ const BUILDS = {
   dual: {
     name: "A college team",
     headline: "Draft six pros. Win the national title.",
-    lede: "The draw lands on an era. Take one player from it and give them a spot: six on the singles ladder, two on the doubles squad. Then set three doubles pairs from anyone on the roster and play a twelve-dual season. Try to go 12-0.",
+    lede: "Roll, and every player in the pool comes from one era, legends included. Take one player from it and give them a spot: six on the singles ladder, two on the doubles squad. Then set three doubles pairs from anyone on the roster and play a twelve-dual season. Try to go 12-0.",
     rule: "The ladder has to run in order of ability. Put a clearly better player below a weaker one and the NCAA calls it stacking: that line is defaulted every match.",
+    knowledge: "The bars are only part of it. Big-match nerve, what a player actually won, surface, style matchups and doubles chemistry all count, and none of it is printed on the card. Servers get neutralised by great returners, volleyers get passed by power hitters, retrievers grind power down. Two net players click in doubles; real-life partners click more.",
     posterTitle: "Lineup card", footEmpty: "Eight spots. No. 1 faces their best player, No. 6 their weakest. Squad players only play doubles.",
     doublesTitle: "Set your doubles", doublesLede: "Pair up three teams from the roster, best pair first. Anyone can play doubles, including your singles players; two will sit out.",
     place: "a spot on the ladder", crateLede: "Choose one player from this pool.",
@@ -101,8 +156,9 @@ const BUILDS = {
   cup: {
     name: "A nation cup team",
     headline: "Draft four pros. Bring the cup home.",
-    lede: "A squad of four: two singles players and two more. Then nominate a doubles pair from anyone on the squad. Ties are played on whatever the host lays down, so pick your home surface and draft for it.",
+    lede: "A squad of four: two singles players and two more, rolled one era at a time. Then nominate a doubles pair from anyone on the squad. Ties are played on whatever the host lays down, so pick your home surface and draft for it.",
     rule: "Each tie is five rubbers, first to three: singles day one, doubles day two, reverse singles day three. Away ties are on the hosts' surface.",
+    knowledge: "The bars are only part of it. Nerve, pedigree, surface and style matchups all count. Volleyers and servers love grass and hate clay; retrievers live on clay. Two net players click in doubles; real-life partners click more.",
     posterTitle: "Tie nomination", footEmpty: "Two singles spots and two squad places. The doubles pair comes from any of the four.",
     doublesTitle: "Nominate the doubles", doublesLede: "Pick two from the squad. A singles player can double up, but it is one pair for the whole run.",
     place: "a place on the team", crateLede: "Choose one player from this pool.",
