@@ -316,3 +316,40 @@ body[data-phase="home"] .draw { align-items: start; }
 .standing-record { display: grid; justify-items: end; gap: 0.15rem; font: 600 1rem/1 var(--mono); }
 .standing-record small { font: 500 0.6875rem/1 var(--body); color: var(--faint); }
 .board-foot { margin-top: 0.6rem; font-size: 0.6875rem; color: var(--faint); }
+
+/* ---------- doubles teams on the card ---------- */
+.teams { display: grid; gap: 0.5rem; }
+.team { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.4rem; align-items: center; padding: 0.35rem; border-radius: var(--r-sm); border: 1px dashed var(--border-strong); }
+.team .spots { gap: 0.25rem; }
+.team-tag { display: grid; justify-items: center; gap: 0.2rem; min-width: 2.2rem; padding: 0 0.3rem; }
+.team-tag b { font: 600 0.875rem/1 var(--mono); color: var(--accent); }
+.team-tag i { font: 600 0.5625rem/1.1 var(--body); font-style: normal; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent-2); text-align: center; }
+.spot-player small { font: 500 0.625rem/1 var(--mono); color: var(--faint); margin-left: 0.3rem; }
+.unseat { width: 1.5rem; height: 1.5rem; border-radius: 50%; border: 1px solid var(--border-strong); background: transparent; color: var(--muted); font-size: 0.9rem; line-height: 1; padding: 0; }
+.unseat:hover { background: var(--panel-2); color: var(--text); }
+.place.is-seat { border-style: dashed; border-color: var(--border-strong); }
+.place.is-seat .spot-player { color: var(--muted); font-weight: 500; font-size: 0.8125rem; }
+.place.is-seat:hover { background: var(--panel-2); }
+
+/* Roster chooser: the sheet doubles as a floating panel on desktop. */
+.sheet.is-seating { display: block; position: fixed; left: 50%; bottom: 1rem; transform: translateX(-50%); width: min(30rem, calc(100% - 1.5rem)); z-index: 10; }
+.sheet.is-seating[hidden] { display: none; }
+.sheet.is-seating .sheet-inner { padding: 0.8rem 0.9rem 0.9rem; border-radius: var(--r); background: rgba(16, 28, 22, 0.96); border: 1px solid var(--border-strong); backdrop-filter: blur(18px); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); }
+.sheet.is-seating .sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.55rem; }
+.sheet.is-seating .sheet-name { font: 700 0.95rem/1.2 var(--display); }
+.sheet.is-seating .sheet-close { width: 1.9rem; height: 1.9rem; border-radius: 50%; border: 1px solid var(--border-strong); background: transparent; color: var(--muted); font-size: 1.1rem; line-height: 1; }
+.sheet-sub { font-size: 0.625rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); margin: 0.5rem 0 0.3rem; }
+.sheet-slots.is-seats { grid-template-columns: repeat(6, 1fr); }
+.sheet-slot em { font: 500 0.625rem/1 var(--mono); font-style: normal; color: var(--faint); margin-left: 0.15rem; }
+.bench { display: grid; gap: 0.35rem; max-height: 50vh; overflow: auto; }
+.bench-btn { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; width: 100%; padding: 0.6rem 0.75rem; border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--panel); text-align: left; }
+.bench-btn:hover { border-color: var(--accent); background: var(--panel-2); }
+.bench-name { font: 600 0.9375rem/1.2 var(--display); letter-spacing: -0.01em; }
+.bench-name small { font: 500 0.625rem/1 var(--mono); color: var(--faint); margin-left: 0.2rem; }
+.bench-stat { font-size: 0.75rem; color: var(--muted); white-space: nowrap; }
+.bench-stat b { font: 600 0.8125rem/1 var(--mono); color: var(--text); }
+@media (max-width: 56rem) {
+  .sheet.is-seating { left: 0; right: 0; bottom: 0; transform: none; width: auto; padding: 0 0.6rem calc(0.6rem + env(safe-area-inset-bottom)); }
+  .sheet-slots.is-seats { grid-template-columns: repeat(3, 1fr); }
+  body[data-phase="spin"] .crate, body[data-phase="full"] .crate { padding-bottom: 0; }
+}

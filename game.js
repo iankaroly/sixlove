@@ -25,11 +25,11 @@
     const base = { kind, copy, tour, pools: eras, wild, tourName: TOURS[tour].name };
     if (kind === "cup") {
       return { ...base, key: `cup-${tour}-${surface}`, label: `cup run, ${TOURS[tour].short}, ${SURFACES[surface].toLowerCase()} at home`,
-        slots: CUP_SLOTS, pairCount: CUP_PAIR_COUNT, surface,
+        slots: CUP_SLOTS, surface,
         stages: CUP_RUN.map(([title, sub, surf, diff]) => ({ title, sub, surface: surf || surface, diff, home: !surf })) };
     }
     return { ...base, key: `dual-${tour}`, label: `college season, ${TOURS[tour].short}`,
-      slots: DUAL_SLOTS, pairCount: DUAL_PAIR_COUNT, surface: "hard", stages: SEASON.map(([title, sub, diff]) => ({ title, sub, surface: "hard", diff })) };
+      slots: DUAL_SLOTS, surface: "hard", stages: SEASON.map(([title, sub, diff]) => ({ title, sub, surface: "hard", diff })) };
   }
 
   let choice = { kind: "dual", tour: "atp", surface: "hard" };
@@ -106,7 +106,7 @@
   async function submitResult() {
     if (!room || !me) return;
     const points = state.results.reduce((sum, r) => sum + Number(r.score.split("-")[0]), 0);
-    const lineup = [...singlesSlots().map((s) => `${s.short}: ${state.lineup[s.id].name}`), ...state.pairs.map((pr) => `Dbl: ${pairName(...pairPlayers(pr))}`)].join("; ");
+    const lineup = [...singlesSlots().map((s) => `${s.short}: ${state.lineup[s.id].name}`), ...pairs().map(([a, b]) => `Dbl: ${pairName(a, b)}`)].join("; ");
     try { room = await api("result", { code: room.code, playerId: me.id, wins: wins(), total: state.results.length, points, grid: grid(), lineup }); }
     catch (err) { roomError = err.message; }
     render();
@@ -158,8 +158,16 @@
   const stackingVisible = () => Boolean(MODES[state.mode]?.showRatings) || ratingsVisible();
   const singles = (p, surface = format.surface) => singlesRating(p, surface);
   const singlesSlots = () => format.slots.filter((s) => s.singles);
-  const roster = () => format.slots.map((s) => state.lineup[s.id]).filter(Boolean);
+  const seatSlots = () => format.slots.filter((s) => s.seat);
+  const teams = () => [...new Set(seatSlots().map((s) => s.team))].map((t) => seatSlots().filter((s) => s.team === t));
+  const roster = () => [...new Set(format.slots.map((s) => state.lineup[s.id]).filter(Boolean))];
   const slotOf = (id) => format.slots.find((s) => s.id === id);
+  const inDoubles = (p) => seatSlots().some((s) => state.lineup[s.id] === p);
+  const inSingles = (p) => singlesSlots().some((s) => state.lineup[s.id] === p);
+  const cardFull = () => format.slots.every((s) => state.lineup[s.id]);
+  // Singles players who could still take a doubles seat.
+  const benchForSeat = () => roster().filter((p) => !inDoubles(p));
+  const pairs = () => teams().map((tm) => tm.map((s) => state.lineup[s.id])).filter((pr) => pr.every(Boolean));
 
   // The ladder rule. Compares each filled singles spot with the nearest filled spot above it.
   function stackedLines(lineup) {
@@ -191,7 +199,7 @@
   function startGame(mode, seedOverride) {
     const seed = seedOverride ?? (mode === "daily" ? hash(`sixlove-${today()}-${format.key}`) : (Math.random() * 2 ** 32) >>> 0);
     state = { phase: "spin", mode, rng: mulberry32(seed), round: 0, respins: MODES[mode].respins,
-      pool: null, crate: [], lastPoolId: null, selected: null, lineup: {}, used: new Set(), pairs: [], pairDraft: null, results: [], shown: 0 };
+      pool: null, crate: [], lastPoolId: null, selected: null, lineup: {}, used: new Set(), seatPick: null, results: [], shown: 0 };
     setLabel("Six", "Love");
     render();
     window.scrollTo({ top: 0, behavior: "auto" });
@@ -230,6 +238,7 @@
   function setLabel(era, scene) { el.era.textContent = era; el.scene.textContent = scene; }
 
   function selectItem(id) {
+    state.seatPick = null;
     state.selected = state.selected?.id === id ? null : state.crate.find((p) => p.id === id);
     render();
   }
@@ -240,31 +249,35 @@
     state.used.add(state.selected.id);
     state.selected = null;
     state.round++;
-    state.phase = state.round === format.slots.length ? "doubles" : "spin";
+    afterPlacement();
+  }
+  // Seat a singles player in doubles, or clear a seat again while the card is still being built.
+  function seatFromRoster(seatId, playerId) {
+    const p = roster().find((x) => x.id === playerId);
+    if (!p || state.lineup[seatId] || inDoubles(p)) return;
+    state.lineup[seatId] = p;
+    state.seatPick = null;
+    afterPlacement();
+  }
+  function clearSeat(seatId) {
+    const p = state.lineup[seatId];
+    if (!p || !inSingles(p) || state.phase === "season" || state.phase === "done") return;
+    delete state.lineup[seatId];
+    if (state.phase === "full") state.phase = "spin";
+    render();
+  }
+  function afterPlacement() {
+    state.phase = cardFull() ? "full" : "spin";
     render();
     if (state.phase === "spin") el.console.querySelector("button")?.focus({ preventScroll: true });
     else window.scrollTo({ top: 0, behavior: reducedMotion ? "auto" : "smooth" });
   }
 
-  // Doubles: tap two roster players to make a pair. Pairs are ordered first to last.
-  const inPair = (id) => state.pairs.some((pr) => pr.includes(id));
-  function tapDoubles(id) {
-    if (inPair(id)) return;
-    if (state.pairDraft === id) state.pairDraft = null;
-    else if (state.pairDraft) { state.pairs.push([state.pairDraft, id]); state.pairDraft = null; }
-    else state.pairDraft = id;
-    render();
-  }
-  function removePair(i) { state.pairs.splice(i, 1); state.pairDraft = null; render(); }
-  const pairPlayers = (pr) => pr.map((id) => roster().find((p) => p.id === id));
-  const pairsDone = () => state.pairs.length === format.pairCount;
-
   // ---------- simulation ----------
   function playDual(stage) {
     const L = state.lineup, stacked = stackedLines(L), lines = [];
     let doublesWon = 0;
-    state.pairs.forEach((pr, i) => {
-      const [a, b] = pairPlayers(pr);
+    pairs().forEach(([a, b], i) => {
       const mine = pairRating(a, b), theirs = stage.diff + DUAL_DOUBLES[i];
       const won = state.rng() < winChance(mine, theirs);
       if (won) doublesWon++;
@@ -286,7 +299,7 @@
   }
 
   function playTie(stage) {
-    const L = state.lineup, [a, b] = pairPlayers(state.pairs[0]), lines = [];
+    const L = state.lineup, [a, b] = pairs()[0], lines = [];
     let mine = 0, theirs = 0;
     const finale = stage.index >= format.stages.length - 3;
     for (const [slot, line] of CUP_RUBBERS) {
@@ -302,7 +315,7 @@
   }
 
   function playSeason() {
-    if (!pairsDone()) return;
+    if (!cardFull()) return;
     state.results = format.stages.map((stage, index) => (format.kind === "dual" ? playDual({ ...stage, index }) : playTie({ ...stage, index })));
     state.shown = 0;
     state.phase = "season";
@@ -340,7 +353,7 @@
     const w = wins(), n = state.results.length;
     const label = `Six-Love ${state.mode === "daily" ? `daily ${today()}` : MODES[state.mode].name.toLowerCase()}, ${format.label}`;
     const card = singlesSlots().map((s) => `${s.name}: ${state.lineup[s.id].name}`).join("\n");
-    const dbl = state.pairs.map((pr, i) => `Doubles ${i + 1}: ${pairName(...pairPlayers(pr))}`).join("\n");
+    const dbl = pairs().map(([a, b], i) => `Doubles ${i + 1}: ${pairName(a, b)}`).join("\n");
     return `${label}: ${w}-${n - w}\n${grid()}\n\n${card}\n${dbl}`;
   }
 
@@ -360,8 +373,8 @@
     if (state.phase === "room") { el.status.innerHTML = `<span>Room ${esc(room.code)}</span><button class="quit" data-action="leave">Leave</button>`; return; }
     const total = format.slots.length;
     const text = state.phase === "season" || state.phase === "done" ? `${MODES[state.mode].name} · ${format.copy.running}`
-      : state.phase === "doubles" ? `${MODES[state.mode].name} · doubles`
-      : `${MODES[state.mode].name} · pick ${Math.min(state.round + 1, total)} of ${total}`;
+      : state.phase === "full" ? `${MODES[state.mode].name} · card set`
+      : `${MODES[state.mode].name} · pick ${state.round + 1}`;
     el.status.innerHTML = `<span>${text}</span><button class="quit" data-action="home">Quit</button>`;
   }
 
@@ -424,33 +437,35 @@
       return;
     }
     if (p === "spin" || p === "spinning") {
+      const openSingles = singlesSlots().filter((s) => !state.lineup[s.id]).length;
+      const openSeats = seatSlots().filter((s) => !state.lineup[s.id]).length;
+      const seatsOnly = !openSingles && openSeats;
       el.console.innerHTML = `
-        <p class="eyebrow">${state.round === 0 ? "First pick" : `Pick ${state.round + 1} of ${format.slots.length}`}</p>
-        <h2>${p === "spinning" ? "Rolling…" : "Roll for an era"}</h2>
-        <p class="lede">${p === "spinning" ? "The ball's in the air." : "Every roll lands on one era. Everyone in that pool played in it, legends included."}</p>
-        <button class="primary" data-action="spin" ${p === "spinning" ? "disabled" : ""}>Roll</button>`;
+        <p class="eyebrow">${state.round === 0 ? "First pick" : `Pick ${state.round + 1}`} · ${openSingles} singles ${openSingles === 1 ? "spot" : "spots"}, ${openSeats} doubles ${openSeats === 1 ? "seat" : "seats"} open</p>
+        <h2>${p === "spinning" ? "Rolling…" : seatsOnly ? "Fill the doubles" : "Roll for an era"}</h2>
+        <p class="lede">${p === "spinning" ? "The ball's in the air." : seatsOnly ? copy.seatHint : "Every roll lands on one era. Everyone in that pool played in it, legends included."}</p>
+        <div class="row"><button class="primary" data-action="spin" ${p === "spinning" ? "disabled" : ""}>Roll</button>
+        ${openSeats && benchForSeat().length && p !== "spinning" ? `<button class="secondary" data-action="seatpick">Seat a singles player</button>` : ""}</div>`;
       return;
     }
     if (p === "pick") {
       const canRespin = state.respins > 0;
       el.console.innerHTML = `
-        <p class="eyebrow">${esc(state.pool.era)} · pick ${state.round + 1} of ${format.slots.length}</p>
+        <p class="eyebrow">${esc(state.pool.era)} · pick ${state.round + 1}</p>
         <h2>${esc(state.pool.scene)}</h2>
-        <p class="lede">${state.selected ? `Choose ${copy.place} for ${esc(state.selected.name)}.` : copy.crateLede}</p>
+        <p class="lede">${state.selected ? `Choose ${copy.place} for ${esc(state.selected.name)}: a singles spot or a doubles seat.` : copy.crateLede}</p>
         ${MODES[state.mode].respins ? `<button class="secondary" data-action="respin" ${canRespin ? "" : "disabled"}>
           ${canRespin ? `Re-roll · ${state.respins} left` : "No re-rolls left"}</button>` : ""}`;
       return;
     }
-    if (p === "doubles") {
+    if (p === "full") {
       const stacked = stackedLines(state.lineup);
-      const need = format.pairCount - state.pairs.length;
       el.console.innerHTML = `
-        <p class="eyebrow">Roster complete</p>
-        <h2>${copy.doublesTitle}</h2>
-        <p class="lede">${copy.doublesLede}</p>
+        <p class="eyebrow">Card complete</p>
+        <h2>${copy.fullTitle}</h2>
+        <p class="lede">${copy.fullLede}</p>
         ${stacked.size && stackingVisible() ? `<p class="warn">Stacked ladder: ${[...stacked].map((id) => slotOf(id).name).join(", ")} will be defaulted.</p>` : ""}
-        <p class="hint">${need ? (state.pairDraft ? "Now tap a partner." : `Tap two players to form ${need === format.pairCount ? "a pair" : "the next pair"}. ${need} to go.`) : "All pairs set."}</p>
-        <button class="primary" data-action="season" ${pairsDone() ? "" : "disabled"}>${copy.start}</button>`;
+        <button class="primary" data-action="season">${copy.start}</button>`;
       return;
     }
     const shown = state.results.slice(0, state.shown);
@@ -501,29 +516,6 @@
         </button></li>`).join("")}</ul>`;
       return;
     }
-    if (p === "doubles") {
-      const show = Boolean(MODES[state.mode].showRatings);
-      const players = roster();
-      el.crate.innerHTML = `
-        <ol class="pairs-set">${Array.from({ length: format.pairCount }, (_, i) => {
-          const pr = state.pairs[i];
-          if (!pr) return `<li class="pairslot is-empty"><span class="pairslot-no">${format.kind === "dual" ? `Doubles ${i + 1}` : "Doubles"}</span><span class="pairslot-names">${i === state.pairs.length ? (state.pairDraft ? `${esc(lineName(players.find((x) => x.id === state.pairDraft)))} + …` : "Tap two players") : "Open"}</span></li>`;
-          const [a, b] = pairPlayers(pr);
-          return `<li class="pairslot"><span class="pairslot-no">${format.kind === "dual" ? `Doubles ${i + 1}` : "Doubles"}</span>
-            <span class="pairslot-names">${flag(a.cc)} ${esc(lineName(a))} / ${flag(b.cc)} ${esc(lineName(b))}</span>
-            ${isRealPair(a, b) ? `<span class="pairslot-score">real pair</span>` : ""}
-            <button class="pairslot-x" data-unpair="${i}" aria-label="Remove pair">×</button></li>`;
-        }).join("")}</ol>
-        <ul class="acts is-roster">${players.map((a) => {
-          const taken = inPair(a.id), draft = state.pairDraft === a.id;
-          const role = format.slots.find((s) => state.lineup[s.id] === a);
-          return `<li><button class="act act-mini ${draft ? "is-selected" : ""} ${taken ? "is-taken" : ""}" data-double="${esc(a.id)}" ${taken ? "disabled" : ""} aria-pressed="${draft}">
-            <span class="act-head"><span class="act-flag">${flag(a.cc)}</span><span class="act-name">${esc(a.name)}</span><span class="act-role">${esc(role.short)}</span></span>
-            ${show ? `<span class="act-dbl"><span>Doubles <b>${a.dbl}</b></span><span>Net <b>${a.net}</b></span><span>Serve <b>${a.serve}</b></span></span>` : `<span class="act-sub">${esc(playerMeta(a))}</span>`}
-          </button></li>`;
-        }).join("")}</ul>`;
-      return;
-    }
     if (p === "room") { el.crate.innerHTML = me ? scoreboardHtml() : ""; return; }
     if (p === "season" || p === "done") {
       const copy = format.copy;
@@ -544,17 +536,22 @@
   function spotRow(s, { interactive }) {
     const p = state.lineup?.[s.id];
     const visible = ratingsVisible();
+    const building = state.phase === "pick" || state.phase === "spin" || state.phase === "full";
     if (p) {
-      const isStacked = stackingVisible() && stackedLines(state.lineup).has(s.id);
+      const isStacked = s.singles && stackingVisible() && stackedLines(state.lineup).has(s.id);
+      const removable = s.seat && building && inSingles(p);
       return `<li class="spot is-filled ${isStacked ? "is-stacked" : ""}"><span class="spot-name">${s.short}</span>
-        <span class="spot-player">${flag(p.cc)} ${esc(p.name)}</span>
-        ${visible ? `<span class="spot-score">${isStacked ? "Stacked" : s.squad ? `<i>dbl</i> ${p.dbl}` : r1(singles(p))}</span>` : ""}</li>`;
+        <span class="spot-player">${flag(p.cc)} ${esc(p.name)}${s.seat && inSingles(p) ? ` <small>${esc(singlesSlots().find((x) => state.lineup[x.id] === p).short)}</small>` : ""}</span>
+        ${removable ? `<button class="unseat" data-unseat="${s.id}" aria-label="Clear seat">×</button>` : visible ? `<span class="spot-score">${isStacked ? "Stacked" : s.seat ? "" : r1(singles(p))}</span>` : ""}</li>`;
     }
     if (interactive && state.phase === "pick" && state.selected) {
-      const bad = stackingVisible() ? stackingIfPlaced(s.id) : [];
+      const bad = s.singles && stackingVisible() ? stackingIfPlaced(s.id) : [];
       return `<li class="spot is-open"><button class="place ${bad.length ? "is-bad" : ""}" data-slot="${s.id}">
-        <span class="spot-name">${s.short}</span><span class="spot-player">${esc(s.squad ? "Doubles only" : "Place here")}</span>
+        <span class="spot-name">${s.short}</span><span class="spot-player">Place here</span>
         ${bad.length ? `<span class="spot-score">Stacks ${bad.map((id) => slotOf(id).short).join(", ")}</span>` : ""}</button></li>`;
+    }
+    if (interactive && s.seat && building && !state.selected && benchForSeat().length) {
+      return `<li class="spot is-open"><button class="place is-seat" data-seat="${s.id}"><span class="spot-name">${s.short}</span><span class="spot-player">Seat a singles player</span></button></li>`;
     }
     return `<li class="spot is-empty"><span class="spot-name">${s.short}</span><span class="spot-player">Open</span></li>`;
   }
@@ -563,36 +560,53 @@
     if (state.phase === "room") { el.poster.innerHTML = ""; return; }
     const home = state.phase === "home";
     const visible = !home && ratingsVisible();
-    const squad = format.slots.filter((s) => s.squad);
-    const pairsList = !home && state.pairs.length ? `<ol class="card-pairs">${state.pairs.map((pr, i) => {
-      const [a, b] = pairPlayers(pr);
-      return `<li><span class="spot-name">${format.kind === "dual" ? `Dbl ${i + 1}` : "Dbl"}</span><span class="spot-player">${esc(pairName(a, b))}</span>${visible ? `<span class="spot-score">${r1(pairRating(a, b))}</span>` : ""}</li>`;
-    }).join("")}</ol>` : "";
-    const filled = home ? 0 : roster().length;
+    const filledSingles = home ? 0 : singlesSlots().filter((s) => state.lineup[s.id]).length;
+    const filledTeams = home ? 0 : pairs().length;
     el.poster.innerHTML = `<div class="card">
       <div class="card-head"><div><p class="card-top">${esc(format.tourName)}${format.kind === "cup" ? ` · ${SURFACES[format.surface].toLowerCase()} at home` : ""}</p>
-      <h2 class="card-title">${format.copy.posterTitle}</h2></div><span class="card-count">${filled}/${format.slots.length}</span></div>
+      <h2 class="card-title">${format.copy.posterTitle}</h2></div><span class="card-count">${filledSingles}/${singlesSlots().length} · ${filledTeams}/${teams().length}</span></div>
       <p class="card-sub">Singles</p>
       <ol class="spots">${singlesSlots().map((s) => spotRow(s, { interactive: true })).join("")}</ol>
-      <p class="card-sub">Doubles squad</p>
-      <ol class="spots">${squad.map((s) => spotRow(s, { interactive: true })).join("")}</ol>
-      ${pairsList ? `<p class="card-sub">Doubles pairs</p>${pairsList}` : ""}
-      <p class="card-foot">${home ? format.copy.footEmpty : state.phase === "pick" && !state.selected ? "Pick a player first." : format.copy.surfaceNote}</p></div>`;
+      <p class="card-sub">Doubles</p>
+      <ol class="teams">${teams().map((tm) => {
+        const [a, b] = tm.map((s) => state.lineup?.[s.id]);
+        return `<li class="team"><ol class="spots">${tm.map((s) => spotRow(s, { interactive: true })).join("")}</ol>
+          <span class="team-tag">${visible && a && b ? `<b>${r1(pairRating(a, b))}</b>` : ""}${a && b && isRealPair(a, b) ? `<i>real pair</i>` : ""}</span></li>`;
+      }).join("")}</ol>
+      <p class="card-foot">${home ? format.copy.footEmpty : state.phase === "pick" && !state.selected ? "Pick a player first." : state.phase === "season" || state.phase === "done" ? format.copy.surfaceNote : format.copy.seatHint}</p></div>`;
   }
 
   // Phones: a bottom sheet for placing the selected player, so the lineup card needn't be on screen.
   function renderSheet() {
-    const open = state.phase === "pick" && state.selected;
-    el.sheet.hidden = !open;
-    if (!open) { el.sheet.innerHTML = ""; return; }
+    const placing = state.phase === "pick" && state.selected;
+    const seating = state.seatPick && (state.phase === "spin" || state.phase === "pick" || state.phase === "full");
+    el.sheet.hidden = !(placing || seating);
+    el.sheet.classList.toggle("is-seating", Boolean(seating));
+    if (!placing && !seating) { el.sheet.innerHTML = ""; return; }
+    if (seating) {
+      const seatId = state.seatPick === "any" ? seatSlots().find((s) => !state.lineup[s.id])?.id : state.seatPick;
+      const show = Boolean(MODES[state.mode].showRatings);
+      el.sheet.innerHTML = `<div class="sheet-inner">
+        <div class="sheet-head"><span class="sheet-name">Seat in ${esc(slotOf(seatId)?.name || "doubles")}</span><button class="sheet-close" data-action="seatcancel" aria-label="Cancel">×</button></div>
+        <ul class="bench">${benchForSeat().map((p) => `<li><button class="bench-btn" data-fill="${esc(p.id)}" data-seatid="${seatId}">
+          <span class="bench-name">${flag(p.cc)} ${esc(p.name)} <small>${esc(singlesSlots().find((x) => state.lineup[x.id] === p)?.short || "")}</small></span>
+          ${show ? `<span class="bench-stat">Dbl <b>${p.dbl}</b> · Net <b>${p.net}</b></span>` : `<span class="bench-stat">${esc(p.style)}</span>`}</button></li>`).join("")}</ul></div>`;
+      return;
+    }
     const p = state.selected;
+    const seatLabel = (s) => `${s.short}<em>${s.id.endsWith("a") ? "A" : "B"}</em>`;
     el.sheet.innerHTML = `<div class="sheet-inner">
       <div class="sheet-head"><span class="sheet-name">${flag(p.cc)} ${esc(p.name)}</span><button class="sheet-close" data-item="${esc(p.id)}" aria-label="Cancel">×</button></div>
-      <div class="sheet-slots">${format.slots.map((s) => {
+      <p class="sheet-sub">Singles</p>
+      <div class="sheet-slots">${singlesSlots().map((s) => {
         if (state.lineup[s.id]) return `<span class="sheet-slot is-filled"><span>${s.short}</span><small>${esc(lineName(state.lineup[s.id]))}</small></span>`;
         const bad = stackingVisible() ? stackingIfPlaced(s.id) : [];
-        return `<button class="sheet-slot ${bad.length ? "is-bad" : ""}" data-slot="${s.id}"><span>${s.short}</span><small>${bad.length ? "Stacks" : s.squad ? "Doubles" : "Open"}</small></button>`;
-      }).join("")}</div></div>`;
+        return `<button class="sheet-slot ${bad.length ? "is-bad" : ""}" data-slot="${s.id}"><span>${s.short}</span><small>${bad.length ? "Stacks" : "Open"}</small></button>`;
+      }).join("")}</div>
+      <p class="sheet-sub">Doubles</p>
+      <div class="sheet-slots is-seats">${seatSlots().map((s) => state.lineup[s.id]
+        ? `<span class="sheet-slot is-filled"><span>${seatLabel(s)}</span><small>${esc(lineName(state.lineup[s.id]))}</small></span>`
+        : `<button class="sheet-slot" data-slot="${s.id}"><span>${seatLabel(s)}</span><small>Open</small></button>`).join("")}</div></div>`;
   }
 
   // ---------- events ----------
@@ -612,13 +626,16 @@
     if (btn.dataset.mode) { startGame(btn.dataset.mode); return; }
     if (btn.dataset.item) { selectItem(btn.dataset.item); return; }
     if (btn.dataset.slot) { placeItem(btn.dataset.slot); return; }
-    if (btn.dataset.double) { tapDoubles(btn.dataset.double); return; }
-    if (btn.dataset.unpair) { removePair(Number(btn.dataset.unpair)); return; }
+    if (btn.dataset.seat) { state.seatPick = btn.dataset.seat; render(); return; }
+    if (btn.dataset.fill) { seatFromRoster(btn.dataset.seatid, btn.dataset.fill); return; }
+    if (btn.dataset.unseat) { clearSeat(btn.dataset.unseat); return; }
     switch (btn.dataset.action) {
       case "spin": spin(false); break;
       case "respin": spin(true); break;
       case "season": playSeason(); break;
       case "skip": finishSeason(); break;
+      case "seatpick": state.seatPick = "any"; render(); break;
+      case "seatcancel": state.seatPick = null; render(); break;
       case "share":
         navigator.clipboard?.writeText(shareText()).then(() => { btn.textContent = "Copied"; setTimeout(() => (btn.textContent = "Copy result"), 1500); }).catch(() => {});
         break;

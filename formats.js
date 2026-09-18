@@ -92,12 +92,13 @@ const pairRating = (a, b) => 0.5 * (a.dbl + b.dbl) / 2 + 0.2 * (a.net + b.net) /
 const STACK_TOLERANCE = 4;
 
 // A dual match: three doubles lines for one point, then six singles. First to four.
-// The roster is six singles spots plus two doubles-squad spots; doubles pairs are set from the whole roster.
+// The card has six singles spots and three doubles teams with two seats each. A rolled player goes into
+// any open spot; a singles player can also be seated in doubles from the roster.
+const seat = (team, side) => ({ id: `d${team}${side}`, name: `Doubles ${team}`, short: `Dbl ${team}`, seat: true, team });
 const DUAL_SLOTS = [
   ...[1, 2, 3, 4, 5, 6].map((n) => ({ id: `s${n}`, name: `No. ${n} singles`, short: `No. ${n}`, line: n, singles: true })),
-  { id: "d7", name: "Doubles squad", short: "Squad", squad: true }, { id: "d8", name: "Doubles squad", short: "Squad", squad: true },
+  seat(1, "a"), seat(1, "b"), seat(2, "a"), seat(2, "b"), seat(3, "a"), seat(3, "b"),
 ];
-const DUAL_PAIR_COUNT = 3;
 const DUAL_LADDER = [5, 3, 1, -1, -3, -5];   // opponent strength by singles line, relative to the dual's rating
 const DUAL_DOUBLES = [2, 0, -2];               // and by doubles line
 
@@ -111,12 +112,11 @@ const SEASON = [
   ["Stanford", "NCAA semifinal", 91], ["USC", "NCAA final", 93],
 ];
 
-// A cup tie: two singles players and a doubles pair nominated from a squad of four. Five rubbers, first to three.
+// A cup tie: two singles players and a doubles pair. Five rubbers, first to three.
 const CUP_SLOTS = [
   { id: "s1", name: "No. 1 singles", short: "No. 1", line: 1, singles: true }, { id: "s2", name: "No. 2 singles", short: "No. 2", line: 2, singles: true },
-  { id: "q3", name: "Squad", short: "Squad", squad: true }, { id: "q4", name: "Squad", short: "Squad", squad: true },
+  { id: "d1a", name: "Doubles", short: "Dbl", seat: true, team: 1 }, { id: "d1b", name: "Doubles", short: "Dbl", seat: true, team: 1 },
 ];
-const CUP_PAIR_COUNT = 1;
 // Seven ties. Surface null means your home surface.
 const CUP_RUN = [
   ["Canada", "Qualifier, at home", null, 78], ["Australia", "Group stage, at home", null, 81],
@@ -142,11 +142,11 @@ const BUILDS = {
   dual: {
     name: "A college team",
     headline: "Draft six pros. Win the national title.",
-    lede: "Roll, and every player in the pool comes from one era, legends included. Take one player from it and give them a spot: six on the singles ladder, two on the doubles squad. Then set three doubles pairs from anyone on the roster and play a twelve-dual season. Try to go 12-0.",
+    lede: "Roll, and every player in the pool comes from one era, legends included. Take one and give them a spot: the singles ladder, No. 1 to No. 6, or a seat on Doubles 1, 2 or 3. Singles players can be seated in doubles too. When the card is full, play a twelve-dual season and try to go 12-0.",
     rule: "The ladder has to run in order of ability. Put a clearly better player below a weaker one and the NCAA calls it stacking: that line is defaulted every match.",
     knowledge: "The bars are only part of it. Big-match nerve, what a player actually won, surface, style matchups and doubles chemistry all count, and none of it is printed on the card. Servers get neutralised by great returners, volleyers get passed by power hitters, retrievers grind power down. Two net players click in doubles; real-life partners click more.",
-    posterTitle: "Lineup card", footEmpty: "Eight spots. No. 1 faces their best player, No. 6 their weakest. Squad players only play doubles.",
-    doublesTitle: "Set your doubles", doublesLede: "Pair up three teams from the roster, best pair first. Anyone can play doubles, including your singles players; two will sit out.",
+    posterTitle: "Lineup card", footEmpty: "Six singles spots and three doubles teams. No. 1 faces their best player, No. 6 their weakest. Doubles 1 faces their best pair.",
+    seatHint: "Roll for a doubles player, or tap an open seat to add someone already in singles.",
     place: "a spot on the ladder", crateLede: "Choose one player from this pool.",
     fullTitle: "The lineup card is in", fullLede: "Twelve duals: doubles point first, then six singles, first to four. The opponents get tougher all the way to the NCAA final.",
     start: "Play the season", running: "in season", stage: "Dual", win: "W", loss: "L", surfaceNote: "Every dual is on hard courts.",
@@ -156,11 +156,11 @@ const BUILDS = {
   cup: {
     name: "A nation cup team",
     headline: "Draft four pros. Bring the cup home.",
-    lede: "A squad of four: two singles players and two more, rolled one era at a time. Then nominate a doubles pair from anyone on the squad. Ties are played on whatever the host lays down, so pick your home surface and draft for it.",
+    lede: "Two singles players and a doubles pair, rolled one era at a time. A singles player can take a doubles seat too. Ties are played on whatever the host lays down, so pick your home surface and draft for it.",
     rule: "Each tie is five rubbers, first to three: singles day one, doubles day two, reverse singles day three. Away ties are on the hosts' surface.",
     knowledge: "The bars are only part of it. Nerve, pedigree, surface and style matchups all count. Volleyers and servers love grass and hate clay; retrievers live on clay. Two net players click in doubles; real-life partners click more.",
-    posterTitle: "Tie nomination", footEmpty: "Two singles spots and two squad places. The doubles pair comes from any of the four.",
-    doublesTitle: "Nominate the doubles", doublesLede: "Pick two from the squad. A singles player can double up, but it is one pair for the whole run.",
+    posterTitle: "Tie nomination", footEmpty: "Two singles spots and a doubles pair. A singles player can double up.",
+    seatHint: "Roll for a doubles player, or tap an open seat to add one of your singles players.",
     place: "a place on the team", crateLede: "Choose one player from this pool.",
     fullTitle: "The team is nominated", fullLede: "Seven ties. Home ties are on your surface; away ties are on theirs.",
     start: "Play the ties", running: "in the cup", stage: "Tie", win: "W", loss: "L", surfaceNote: "",
