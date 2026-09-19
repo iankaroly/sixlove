@@ -276,6 +276,8 @@
 
   function spin(isRespin) {
     if (state.phase === "spinning") return;
+    const openSingles = singlesSlots().some((sl) => !state.lineup[sl.id]);
+    if (!openSingles && !seatAllowsOutsider()) return;
     if (isRespin) state.respins--;
     // One era per roll, never the same era twice running. Each roll deals a fresh weighted hand from that era.
     const { pool, crate, eligible } = drawHand();
@@ -584,8 +586,11 @@
         <p class="eyebrow">${state.round === 0 ? "First pick" : `Pick ${state.round + 1}`} · ${openSingles} singles ${openSingles === 1 ? "spot" : "spots"}, ${openSeats} doubles ${openSeats === 1 ? "seat" : "seats"} open</p>
         <h2>${p === "spinning" ? "Rolling…" : seatsOnly ? "Fill the doubles" : "Roll for an era"}</h2>
         <p class="lede">${p === "spinning" ? "The ball's in the air." : seatsOnly ? `${needSingles ? `${needSingles} more doubles seat${needSingles === 1 ? "" : "s"} must go to your singles players. ` : ""}${copy.seatHint}` : `Every roll deals ${state.rules.hand} players from one era. Legends are rare; journeymen and doubles specialists are not.`}</p>
-        <div class="row"><button class="primary" data-action="spin" ${p === "spinning" ? "disabled" : ""}>Roll</button>
-        ${openSeats && benchForSeat().length && p !== "spinning" ? `<button class="secondary" data-action="seatpick">Seat a singles player</button>` : ""}</div>`;
+        ${seatsOnly && !seatAllowsOutsider()
+          ? `<div class="row"><button class="primary" data-action="seatpick">Seat a singles player</button></div>
+             <p class="hint">No more rolls: every open seat is owed to a singles player.</p>`
+          : `<div class="row"><button class="primary" data-action="spin" ${p === "spinning" ? "disabled" : ""}>Roll</button>
+        ${openSeats && benchForSeat().length && p !== "spinning" ? `<button class="secondary" data-action="seatpick">Seat a singles player</button>` : ""}</div>`}`;
       return;
     }
     if (p === "pick") {
