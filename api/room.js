@@ -154,6 +154,8 @@ export default async function handler(req, res) {
     }
     return res.status(400).json({ error: "Unknown action" });
   } catch (err) {
+    // The Hobby Blob quota resets monthly; while the store is suspended every call lands here.
+    if (/suspended|403 Forbidden/i.test(err.message || "")) return res.status(503).json({ error: "Rooms are paused until the monthly storage quota resets. Solo play still works." });
     return res.status(500).json({ error: err.message || "Server error" });
   }
 }
