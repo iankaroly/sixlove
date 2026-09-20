@@ -130,12 +130,15 @@
     } catch (err) { roomError = err.message; room = null; state = { phase: "home" }; history.replaceState(null, "", location.pathname); }
     render();
   }
+  // Only the lobby and the scoreboard change under you, so only poll there, and never in a hidden tab.
+  const wantsPolling = () => Boolean(room) && !document.hidden && (state.phase === "room" || state.phase === "done");
   async function refreshRoom() {
-    if (!room) return;
+    if (!wantsPolling()) return;
     try { room = await api("get", { code: room.code }); } catch { /* keep the last copy */ }
     if (state.phase === "room" || state.phase === "done") render();
   }
   function startPolling() { stopPolling(); pollTimer = setInterval(refreshRoom, 5000); }
+  document.addEventListener("visibilitychange", () => { if (pollTimer) refreshRoom(); });
   function stopPolling() { clearInterval(pollTimer); pollTimer = null; }
   async function submitResult() {
     if (!room || !me) return;
